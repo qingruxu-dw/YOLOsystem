@@ -121,9 +121,9 @@ class DehazingDetectionPipeline:
         if save_path:
             save_path = Path(save_path)
             
-            if self.config['pipeline']['save_dehazed'] and self.dehazing_enabled:
+            if self.config['pipeline']['save_dehazed'] and self.dehazing_enabled and 'dehazed' in results:
                 dehazed_path = save_path.parent / f"{save_path.stem}_dehazed{save_path.suffix}"
-                cv2.imwrite(str(dehazed_path), dehazed_img)
+                cv2.imwrite(str(dehazed_path), results['dehazed'])
             
             if self.config['pipeline']['save_detections']:
                 detection_path = save_path.parent / f"{save_path.stem}_detection{save_path.suffix}"
