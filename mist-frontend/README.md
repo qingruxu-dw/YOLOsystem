@@ -1,4 +1,7 @@
--  Vue3 + Element Plus（按需导入）+ Pinia + Vue Router + Axios， Vue Router 路由管理
+- 项目名称：清视智监-无人机图像去雾目标检测系统（前端）
+- 架构说明：前后端分离；前端采用 Vue3 + Element Plus（按需导入）+ Pinia + Vue Router + Axios，使用 Vite 构建与开发。
+
+采用典型的 Vue.js 项目结构，使用了 Vue Router 进行路由管理和 Pinia 作为状态管理工具。
 
 ## 环境准备
 
@@ -13,7 +16,15 @@
      npm -v
      ```
 
-2. **安装依赖**
+2. **安装代码编辑器**
+
+   - 推荐使用 VS Code，并安装以下插件：
+     - Volar（Vue 官方推荐插件）
+     - Vue Language Features (Volar)
+     - ESLint
+     - Prettier
+
+3. **安装依赖**
 
 ```
 npm install
@@ -35,6 +46,21 @@ npm install vite @vitejs/plugin-vue vue@^3.2.0 vue-router@^4.0.0 vuex@^4.0.0
 npm i element-plus @element-plus/icons-vue unplugin-auto-import unplugin-vue-components
 ```
 
+## 开发流程
+
+1. **先构建基础页面**
+   - 从 `BaseView.vue` 开始
+   - 实现基本的路由跳转功能
+2. **逐步实现各功能模块**
+   - 按照剩余模块顺序开发
+   - 每个模块对应相应的 store 模块和组件
+3. **集成 API 调用**
+   - 在 `utils/api.js` 中封装 axios 实例
+   - 在 store 的 actions 中调用 API
+4. **添加样式和组件**
+   - 使用 `assets/styles/` 中的 CSS 文件
+   - 开发可复用组件放在 `components/` 目录下
+
 ## 启动项目
 
 ```
@@ -44,6 +70,21 @@ npm run dev
 # 构建生产版本
 npm run build
 ```
+
+### Element Plus 按需导入配置
+
+- 已在 `vite.config.js` 集成按需导入插件与解析器：
+  ```js
+  import AutoImport from 'unplugin-auto-import/vite'
+  import Components from 'unplugin-vue-components/vite'
+  import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+
+  plugins: [
+    vue(),
+    AutoImport({ resolvers: [ElementPlusResolver({ importStyle: 'css' })] }),
+    Components({ resolvers: [ElementPlusResolver({ importStyle: 'css' })] })
+  ]
+  ```
 
 ### 状态管理与接口封装
 
