@@ -139,41 +139,45 @@ class DualPathBackbone(nn.Module):
                     channels, fusion_type='attention'
                 )
 
-    def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> torch.Tensor:
         """
         Args:
             img_original: 原图 [B, 3, H, W]
             img_dehazed: 去雾图 [B, 3, H, W]
 
         Returns:
-            融合后的多尺度特征列表
+            融合后的单个特征张量（用于后续处理）
         """
-        # 存储两路特征
+        # 存储所有层的输出
         feats_original = []
         feats_dehazed = []
 
-        # 原图特征提取
+        # 原图特征提取 - 通过完整的backbone
         x_orig = img_original
         for i, layer in enumerate(self.model.model[:10]):  # backbone部分
             x_orig = layer(x_orig)
-            if i in self.fusion_layers:
-                feats_original.append(x_orig)
+            feats_original.append(x_orig)
 
         # 去雾图特征提取（共享权重）
         x_dehz = img_dehazed
         for i, layer in enumerate(self.model.model[:10]):
             x_dehz = layer(x_dehz)
-            if i in self.fusion_layers:
-                feats_dehazed.append(x_dehz)
+            feats_dehazed.append(x_dehz)
 
-        # 特征融合
+        # 在指定层进行特征融合，其他层使用原图特征
         fused_features = []
-        for idx, layer_idx in enumerate(self.fusion_layers):
-            fusion_module = self.fusion_modules[f'fusion_{layer_idx}']
-            fused_feat = fusion_module(feats_original[idx], feats_dehazed[idx])
-            fused_features.append(fused_feat)
+        for i in range(len(feats_original)):
+            if i in self.fusion_layers and f'fusion_{i}' in self.fusion_modules:
+                # 融合层
+                fusion_module = self.fusion_modules[f'fusion_{i}']
+                fused_feat = fusion_module(feats_original[i], feats_dehazed[i])
+                fused_features.append(fused_feat)
+            else:
+                # 非融合层，直接使用原图特征
+                fused_features.append(feats_original[i])
 
-        return fused_features
+        # 返回最后一层的融合特征
+        return fused_features[-1]
 
 
 class FeatureFusionYOLO(nn.Module):
@@ -215,6 +219,24 @@ class FeatureFusionYOLO(nn.Module):
         self.num_classes = num_classes
         self.fusion_layers = fusion_layers
 
+    def train(self, mode: bool = True):
+        """
+        重写train方法，避免调用YOLO的train方法
+        """
+        # 只设置dual_backbone和neck_head的训练模式
+        self.training = mode
+        self.dual_backbone.train(mode)
+        for layer in self.neck_head:
+            if hasattr(layer, 'train'):
+                layer.train(mode)
+        return self
+
+    def eval(self):
+        """
+        重写eval方法
+        """
+        return self.train(False)
+
     def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -224,11 +246,11 @@ class FeatureFusionYOLO(nn.Module):
         Returns:
             检测结果
         """
-        # 特征融合
-        fused_features = self.dual_backbone(img_original, img_dehazed)
+        # 获取融合后的backbone特征
+        fused_feature = self.dual_backbone(img_original, img_dehazed)
 
-        # Neck + Head
-        x = fused_features[-1]  # 使用最后一层融合特征
+        # 通过Neck和Head
+        x = fused_feature
         for layer in self.neck_head:
             x = layer(x)
 

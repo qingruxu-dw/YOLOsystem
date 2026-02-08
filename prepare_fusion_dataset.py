@@ -102,15 +102,15 @@ class FusionDatasetPreparer:
         for split_name, image_list in splits.items():
             print(f"\n复制 {split_name} 数据...")
             for img_name in tqdm(image_list):
-                # 原图
-                src_clear = clear_dir / f"{img_name}.jpg"
-                dst_clear = self.dirs[f'{split_name}_original'] / f"{img_name}.jpg"
-                shutil.copy2(src_clear, dst_clear)
-
-                # 去雾图
+                # 原图（有雾的图像作为输入）
                 src_hazy = hazy_dir / f"{img_name}.jpg"
-                dst_hazy = self.dirs[f'{split_name}_dehazed'] / f"{img_name}.jpg"
-                shutil.copy2(src_hazy, dst_hazy)
+                dst_original = self.dirs[f'{split_name}_original'] / f"{img_name}.jpg"
+                shutil.copy2(src_hazy, dst_original)
+
+                # 去雾图（清晰图像作为去雾后的目标）
+                src_clear = clear_dir / f"{img_name}.jpg"
+                dst_dehazed = self.dirs[f'{split_name}_dehazed'] / f"{img_name}.jpg"
+                shutil.copy2(src_clear, dst_dehazed)
 
                 # 标注
                 src_label = label_dir / f"{img_name}.txt"
