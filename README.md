@@ -145,16 +145,85 @@ python test_foggy_cityscapes.py \
 
 ---
 
+## 📁 项目结构
+
+```
+YOLOsystem/
+├── 📚 文档文件
+│   ├── README.md                           # 项目总览（本文件）
+│   ├── INFERENCE_GUIDE.md                  # 推理使用详细指南
+│   ├── FOGGY_CITYSCAPES_TEST_GUIDE.md      # Foggy Cityscapes测试指南
+│   └── END_TO_END_FOG_AWARE_YOLO.md        # 端到端方案说明
+│
+├── 🚀 推理脚本（部署使用）
+│   ├── simple_fusion_inference.py          # 简单融合推理（推荐）⭐⭐⭐⭐⭐
+│   └── inference_fusion.py                 # 训练模型推理
+│
+├── 🎓 训练脚本
+│   ├── prepare_fusion_dataset.py           # 准备融合训练数据集
+│   ├── train_feature_fusion_v2.py          # 两阶段训练脚本
+│   ├── prepare_direct_foggy_data.py        # 准备端到端训练数据
+│   ├── train_direct_foggy.py               # 直接在有雾图上训练
+│   └── train_fog_aware.py                  # 雾感知YOLO训练（未来工作）
+│
+├── 🧪 测试脚本
+│   ├── test_foggy_cityscapes.py            # Foggy Cityscapes标准测试
+│   ├── validate_fusion_training.py         # 验证训练效果
+│   ├── test_fusion_detection.py            # 融合检测对比测试
+│   └── test_manual_weights.py              # 手动权重调优测试
+│
+├── 🧠 核心模块（yolosystem/）
+│   ├── __init__.py                         # 模块初始化
+│   ├── dehazing.py                         # 去雾算法（暗通道先验）
+│   ├── detection.py                        # 目标检测模块
+│   ├── feature_fusion_yolo_simple.py       # 简化版融合YOLO（推荐）
+│   ├── feature_fusion_yolo.py              # 完整版融合YOLO（多种策略）
+│   ├── fog_aware_yolo.py                   # 端到端雾感知YOLO（未来工作）
+│   ├── fusion.py                           # 融合模块
+│   ├── pipeline.py                         # 检测流程管道
+│   └── utils.py                            # 工具函数
+│
+├── 🎯 预训练模型
+│   ├── yolo11n.pt                          # YOLOv11 nano (5.4MB)
+│   └── yolov8n.pt                          # YOLOv8 nano (6.3MB)
+│
+├── 🖼️ 测试图像
+│   └── test_images/
+│       ├── hazy_image3.jpg                 # 测试图像1
+│       ├── hazy_road.jpg                   # 测试图像2
+│       └── hazy_road2.jpg                  # 测试图像3
+│
+├── ⚙️ 配置文件
+│   ├── requirements.txt                    # Python依赖列表
+│   └── .gitignore                          # Git忽略配置
+│
+└── 📂 数据和输出（不在Git中）
+    ├── datasets/                           # 训练和测试数据集
+    │   ├── school/                         # 校园数据集
+    │   ├── fusion_data/                    # 融合训练数据
+    │   └── foggy_cityscapes/               # Foggy Cityscapes数据集
+    ├── runs/                               # 训练输出
+    │   └── fusion_fixed/                   # 训练好的模型
+    └── outputs/                            # 推理输出结果
+```
+
+---
+
 ## 📁 完整文件说明
 
 ### 核心模块（yolosystem/）
 
 | 文件 | 功能 | 何时使用 |
 |------|------|---------|
-| `dehazing.py` | 去雾算法（暗通道先验） | 所有方法都需要 |
-| `feature_fusion_yolo_simple.py` | 简化版融合YOLO | 训练和推理 |
-| `feature_fusion_yolo.py` | 完整版融合YOLO（多种融合策略） | 高级研究 |
+| `__init__.py` | 模块初始化 | 自动导入 |
+| `dehazing.py` | 去雾算法（暗通道先验DCP） | 所有方法都需要 |
+| `detection.py` | 目标检测模块 | 基础检测功能 |
+| `feature_fusion_yolo_simple.py` | 简化版融合YOLO（推荐） | 训练和推理 |
+| `feature_fusion_yolo.py` | 完整版融合YOLO（多种策略） | 高级研究 |
 | `fog_aware_yolo.py` | 端到端雾感知YOLO | 未来工作 |
+| `fusion.py` | 图像融合模块 | 融合处理 |
+| `pipeline.py` | 检测流程管道 | 完整流程 |
+| `utils.py` | 工具函数 | 辅助功能 |
 
 ### 推理脚本（部署使用）
 
