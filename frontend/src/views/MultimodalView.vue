@@ -166,7 +166,7 @@ import ImageUpload from '@/components/common/ImageUpload.vue'
 const store = useTaskStore()
 
 // 当前模式：多模态模式
-const currentMode = 'multimodal'
+const currentMode = 'fusion'
 const panelTitle = '多模态模式控制面板'
 
 // 标题右侧状态按钮文案与样式

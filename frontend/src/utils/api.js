@@ -7,9 +7,13 @@ const api = axios.create({
 })
 
 // 文件上传接口：/api/upload
-export function uploadImage(file) {
+export function uploadImage(file, mode = 'normal', textPrompt = '') {
   const form = new FormData()
   form.append('image', file)
+  form.append('mode', mode)
+  if (textPrompt) {
+    form.append('text_prompt', textPrompt)
+  }
   return api.post('/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })

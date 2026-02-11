@@ -40,12 +40,12 @@ export const useTaskStore = defineStore('task', {
         this.status = 'idle'
       }
     },
-    async upload() {
+    async upload(mode = 'normal', textPrompt = '') {
       if (!this.file) return
       this.uploading = true
       this.errorMessage = ''
       try {
-        const { data } = await uploadImage(this.file)
+        const { data } = await uploadImage(this.file, mode, textPrompt)
         // 可选：后端返回上传后的资源ID或路径
         // 这里保持前端预览即可
         this.status = 'uploaded'
@@ -58,13 +58,13 @@ export const useTaskStore = defineStore('task', {
         this.uploading = false
       }
     },
-    async startProcessTask({ mode = 'basic', textPrompt = '' } = {}) {
+    async startProcessTask({ mode = 'normal', textPrompt = '' } = {}) {
       if (!this.file) return
       this.processing = true
       this.status = 'processing'
       this.errorMessage = ''
       try {
-        const { data } = await uploadImage(this.file)
+        const { data } = await uploadImage(this.file, mode, textPrompt)
         this.dehazeImageUrl = data?.dehazed || ''
         this.detectImageUrl = data?.detected || ''
         // 解析 basename：来自 original 路径 /api/image/{timestamp}/1_original_{basename}.jpg

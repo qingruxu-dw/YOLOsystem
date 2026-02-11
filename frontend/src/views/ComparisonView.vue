@@ -49,6 +49,48 @@
       <el-main class="main-area">
         <div class="comparison-container">
           
+          <!-- Scheme 0: Baseline -->
+          <el-card shadow="hover" class="scheme-card mb-4">
+            <template #header>
+              <div class="scheme-header">
+                <span class="badge baseline">基准对比 (Baseline)</span>
+                <span class="title">原始有雾图直接检测 (Foggy -> Detect)</span>
+              </div>
+            </template>
+            <div class="pipeline-row">
+              <div class="image-box-wrapper">
+                <span class="img-label">有雾原图</span>
+                <div class="image-box">
+                  <el-image :src="store.inputPreviewUrl" fit="contain" class="pipeline-img">
+                    <template #error><div class="placeholder">等待上传</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="image-box-wrapper">
+                <span class="img-label">直接检测结果</span>
+                <div class="image-box">
+                  <el-image :src="baselineResult.detected" fit="contain" class="pipeline-img" :preview-src-list="[baselineResult.detected]">
+                    <template #error><div class="placeholder">待处理</div></template>
+                  </el-image>
+                </div>
+              </div>
+              
+              <!-- Key Indicators -->
+              <div class="metrics-panel">
+                <div class="metric-item">
+                  <span class="label">目标总数</span>
+                  <span class="value">{{ baselineResult.count || 0 }}</span>
+                </div>
+                <div class="metric-item">
+                  <span class="label">平均置信度</span>
+                  <span class="value">{{ baselineResult.avgConf || '0%' }}</span>
+                </div>
+              </div>
+              <div class="status-hint">作为基准参照</div>
+            </div>
+          </el-card>
+
           <!-- Scheme 1: Basic -->
           <el-card shadow="hover" class="scheme-card mb-4">
             <template #header>
@@ -162,21 +204,32 @@
               </div>
             </template>
             <el-table :data="comparisonData" border style="width: 100%">
-              <el-table-column prop="metric" label="指标" width="180" />
+              <el-table-column prop="metric" label="指标" width="150" />
+              <el-table-column label="基准 (Baseline)" align="center">
+                <template #default="scope">
+                  <span class="baseline-val">{{ scope.row.baseline }}</span>
+                </template>
+              </el-table-column>
               <el-table-column label="方案一 (基础去雾)" align="center">
                 <template #default="scope">
-                  <span :class="{ 'winner': scope.row.basic > scope.row.multimodal }">{{ scope.row.basic }}</span>
+                  <span :class="{ 'winner': scope.row.metric !== '推理耗时 (ms)' && scope.row.basic > scope.row.baseline && scope.row.basic >= scope.row.multimodal }">{{ scope.row.basic }}</span>
+                  <div class="imp-sub" v-if="scope.row.basicImp != 0">
+                    {{ scope.row.basicImp > 0 ? '+' : '' }}{{ scope.row.basicImp }}%
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="方案二 (多模态引导)" align="center">
                 <template #default="scope">
-                  <span :class="{ 'winner': scope.row.multimodal > scope.row.basic }">{{ scope.row.multimodal }}</span>
+                  <span :class="{ 'winner': scope.row.metric !== '推理耗时 (ms)' && scope.row.multimodal > scope.row.basic && scope.row.multimodal > scope.row.baseline }" class="highlight-val">{{ scope.row.multimodal }}</span>
+                  <div class="imp-sub highlight" v-if="scope.row.multiImp != 0">
+                    {{ scope.row.multiImp > 0 ? '+' : '' }}{{ scope.row.multiImp }}%
+                  </div>
                 </template>
               </el-table-column>
-              <el-table-column label="提升幅度" align="center">
+              <el-table-column label="最终提升 (vs Baseline)" align="center" width="160">
                 <template #default="scope">
-                  <el-tag :type="scope.row.improvement > 0 ? 'success' : 'info'">
-                    {{ scope.row.improvement > 0 ? '+' : '' }}{{ scope.row.improvement }}%
+                  <el-tag :type="scope.row.metric === '推理耗时 (ms)' ? (scope.row.multiImp > 0 ? 'danger' : 'success') : (scope.row.multiImp > 0 ? 'success' : 'info')" effect="dark">
+                    {{ scope.row.multiImp > 0 ? '↑ ' : '↓ ' }}{{ Math.abs(scope.row.multiImp) }}%
                   </el-tag>
                 </template>
               </el-table-column>
@@ -202,7 +255,7 @@ import { ref, reactive, computed } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import ImageUpload from '@/components/common/ImageUpload.vue'
 import { Document } from '@element-plus/icons-vue'
-import { startProcess, getDetections } from '@/utils/api'
+import { uploadImage, getDetections } from '@/utils/api'
 import { ElMessage } from 'element-plus'
 
 const store = useTaskStore()
@@ -210,32 +263,66 @@ const textPrompt = ref('')
 const processing = ref(false)
 const comparisonDone = ref(false)
 
+const baselineResult = reactive({
+  dehazed: '',
+  detected: '',
+  count: 0,
+  avgConf: '0%',
+  latency: 0
+})
+
 const basicResult = reactive({
   dehazed: '',
   detected: '',
   count: 0,
-  avgConf: '0%'
+  avgConf: '0%',
+  latency: 0
 })
 
 const multimodalResult = reactive({
   dehazed: '',
   detected: '',
   count: 0,
-  avgConf: '0%'
+  avgConf: '0%',
+  latency: 0
 })
 
 const comparisonData = computed(() => {
+  const baseCount = baselineResult.count
   const basicCount = basicResult.count
   const multiCount = multimodalResult.count
+  
+  const baseConf = parseFloat(baselineResult.avgConf) || 0
   const basicConf = parseFloat(basicResult.avgConf) || 0
   const multiConf = parseFloat(multimodalResult.avgConf) || 0
 
-  const countImp = basicCount === 0 ? (multiCount > 0 ? 100 : 0) : ((multiCount - basicCount) / basicCount * 100).toFixed(1)
-  const confImp = basicConf === 0 ? (multiConf > 0 ? 100 : 0) : ((multiConf - basicConf) / basicConf * 100).toFixed(1)
+  const calcImp = (val, base) => base === 0 ? (val > 0 ? 100 : 0) : ((val - base) / base * 100).toFixed(1)
 
   return [
-    { metric: '目标检测数量', basic: basicCount, multimodal: multiCount, improvement: countImp },
-    { metric: '平均置信度 (%)', basic: basicConf, multimodal: multiConf, improvement: confImp }
+    { 
+      metric: '目标检测数量', 
+      baseline: baseCount,
+      basic: basicCount, 
+      multimodal: multiCount, 
+      basicImp: calcImp(basicCount, baseCount),
+      multiImp: calcImp(multiCount, baseCount) 
+    },
+    { 
+      metric: '平均置信度 (%)', 
+      baseline: baseConf,
+      basic: basicConf, 
+      multimodal: multiConf, 
+      basicImp: calcImp(basicConf, baseConf),
+      multiImp: calcImp(multiConf, baseConf) 
+    },
+    {
+      metric: '推理耗时 (ms)',
+      baseline: baselineResult.latency.toFixed(1),
+      basic: basicResult.latency.toFixed(1),
+      multimodal: multimodalResult.latency.toFixed(1),
+      basicImp: ((basicResult.latency - baselineResult.latency) / baselineResult.latency * 100).toFixed(1),
+      multiImp: ((multimodalResult.latency - baselineResult.latency) / baselineResult.latency * 100).toFixed(1)
+    }
   ]
 })
 
@@ -249,8 +336,9 @@ const onFileChange = (file) => {
 
 const resetResults = () => {
   comparisonDone.value = false
-  Object.assign(basicResult, { dehazed: '', detected: '', count: 0, avgConf: '0%' })
-  Object.assign(multimodalResult, { dehazed: '', detected: '', count: 0, avgConf: '0%' })
+  Object.assign(baselineResult, { dehazed: '', detected: '', count: 0, avgConf: '0%', latency: 0 })
+  Object.assign(basicResult, { dehazed: '', detected: '', count: 0, avgConf: '0%', latency: 0 })
+  Object.assign(multimodalResult, { dehazed: '', detected: '', count: 0, avgConf: '0%', latency: 0 })
 }
 
 const parseDetections = async (timestamp, basename) => {
@@ -273,41 +361,43 @@ const handleCompare = async () => {
   comparisonDone.value = false
   
   try {
-    // 1. Upload and get Basic Result (assuming upload returns basic processing)
-    // Using store.upload() which calls api.uploadImage
-    const uploadData = await store.upload()
-    
-    // Fill Basic Results
-    basicResult.dehazed = uploadData?.dehazed || ''
-    basicResult.detected = uploadData?.detected || ''
-    
-    // Parse metrics for Basic
-    if (uploadData?.timestamp && uploadData?.original) {
-        const m = uploadData.original.match(/1_original_(.+)\.jpg$/)
+    // 0. Baseline Process (Original foggy detection)
+    const baselineResp = await uploadImage(store.file, 'baseline')
+    const baseData = baselineResp.data
+    baselineResult.detected = baseData?.detected || ''
+    baselineResult.latency = baseData?.latency || 0
+    if (baseData?.timestamp && baseData?.original) {
+        const m = baseData.original.match(/1_original_(.+)\.jpg$/)
         const basename = m ? m[1] : ''
         if (basename) {
-            const metrics = await parseDetections(uploadData.timestamp, basename)
+            const metrics = await parseDetections(baseData.timestamp, basename)
+            baselineResult.count = metrics.count
+            baselineResult.avgConf = metrics.avgConf
+        }
+    }
+
+    // 1. Basic Process (Dehaze -> Detect)
+    const basicResp = await uploadImage(store.file, 'normal')
+    const basicData = basicResp.data
+    basicResult.dehazed = basicData?.dehazed || ''
+    basicResult.detected = basicData?.detected || ''
+    basicResult.latency = basicData?.latency || 0
+    if (basicData?.timestamp && basicData?.original) {
+        const m = basicData.original.match(/1_original_(.+)\.jpg$/)
+        const basename = m ? m[1] : ''
+        if (basename) {
+            const metrics = await parseDetections(basicData.timestamp, basename)
             basicResult.count = metrics.count
             basicResult.avgConf = metrics.avgConf
         }
     }
 
-    // 2. Call Multimodal Process
-    // We need to ensure the backend knows which image we are talking about.
-    // Since startProcess doesn't take an ID, we assume it uses the last uploaded file in the session.
-    // This is a risky assumption but consistent with the current architecture observed.
-    const multiResp = await startProcess({
-        mode: 'multimodal',
-        text_prompt: textPrompt.value,
-        dehaze_strength: store.dehazeStrength
-    })
-    
+    // 2. Multimodal Process (Fusion -> Detect)
+    const multiResp = await uploadImage(store.file, 'multimodal', textPrompt.value)
     const multiData = multiResp.data
     multimodalResult.dehazed = multiData?.dehazed || ''
     multimodalResult.detected = multiData?.detected || ''
-
-    // Parse metrics for Multimodal
-    // Assuming the backend returns similar structure
+    multimodalResult.latency = multiData?.latency || 0
     if (multiData?.timestamp && multiData?.original) {
         const m = multiData.original.match(/1_original_(.+)\.jpg$/)
         const basename = m ? m[1] : ''

@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 from dehaze_api import DehazeDetector
+from fusion_api import FusionDetector
 
 # ==================== 初始化 ====================
 app = Flask(__name__, static_folder=None)
@@ -16,7 +17,7 @@ CORS(app)
 # 配置文件
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
-MODEL_PATH = 'models/yolov8n.pt'
+MODEL_PATH = 'models/yolo11n.pt'
 
 # 创建目录
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -24,7 +25,10 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # 初始化检测器
 print("🌫️ 初始化雾天目标检测系统...")
-detector = DehazeDetector(MODEL_PATH)
+# 默认检测器 (单模态)
+default_detector = DehazeDetector(MODEL_PATH)
+# 融合检测器 (多模态)
+fusion_detector = FusionDetector(MODEL_PATH)
 
 # ==================== 路由 ====================
 
@@ -59,8 +63,20 @@ def upload_image():
 
         print(f"📸 处理图片: {file.filename}, 尺寸: {image_np.shape}")
 
-        # 处理图像 - 传递numpy数组和文件名
-        result = detector.process(image_np, file.filename)
+        # 获取处理模式
+        mode = request.form.get('mode', 'normal')
+        text_prompt = request.form.get('text_prompt', '')
+        print(f"🔄 处理模式: {mode}, 文本引导: {text_prompt}")
+
+        if mode in ['fusion', 'multimodal']:
+            # 使用多模态融合检测
+            result = fusion_detector.process(image_np, file.filename, text_prompt=text_prompt)
+        elif mode == 'baseline':
+            # 使用基准检测 (直接在有雾图上检测)
+            result = default_detector.process_baseline(image_np, file.filename)
+        else:
+            # 使用默认单模态检测 (去雾后检测)
+            result = default_detector.process(image_np, file.filename)
 
         return jsonify({
             'success': True,
@@ -69,7 +85,8 @@ def upload_image():
             'detected': f'/api/image/{result["detected_filename"]}',
             'num_objects': result['num_objects'],
             'output_dir': result['output_dir'],
-            'timestamp': result['timestamp']
+            'timestamp': result['timestamp'],
+            'latency': result.get('latency', 0)
         })
 
     except Exception as e:
