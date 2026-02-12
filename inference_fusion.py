@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 import argparse
 from yolosystem.feature_fusion_yolo_simple import create_feature_fusion_yolo
-from yolosystem.dehazing import DehazingModule
+from yolosystem.coa_adapter import CoADehazer
 
 
 class FusionInference:
@@ -40,7 +40,9 @@ class FusionInference:
         self.model.eval()
 
         # 去雾模块
-        self.dehazer = DehazingModule()
+        # self.dehazer = DehazingModule()
+        print("加载 CoA 去雾模型...")
+        self.dehazer = CoADehazer()
 
         # COCO类别名称
         self.class_names = [
@@ -85,15 +87,21 @@ class FusionInference:
         if img is None:
             raise ValueError(f"无法读取图像: {img_path}")
 
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # OpenCV 读取是 BGR，转换为 RGB 供 YOLO 使用
+        # 但是我们新的 CoADehazer.process_opencv 接受并返回 BGR
+        # 所以这里的逻辑微调一下
 
-        # 去雾
-        print("正在去雾...")
-        img_dehazed, _ = self.dehazer.dehaze(img_rgb)
+        # 1. 去雾 (使用 BGR)
+        print("正在去雾 (CoA)...")
+        img_dehazed_bgr = self.dehazer.process_opencv(img)
+        
+        # 2. 转换颜色空间为 RGB (供 YOLO 推理)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_dehazed_rgb = cv2.cvtColor(img_dehazed_bgr, cv2.COLOR_BGR2RGB)
 
         # 预处理
         img_foggy_tensor = self.preprocess(img_rgb)
-        img_dehazed_tensor = self.preprocess(img_dehazed)
+        img_dehazed_tensor = self.preprocess(img_dehazed_rgb)
 
         # 推理
         print("正在检测...")

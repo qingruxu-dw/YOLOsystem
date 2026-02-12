@@ -15,18 +15,27 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import random
 from tqdm import tqdm
+import cv2
+from yolosystem.coa_adapter import CoADehazer
 
 
 class FusionDatasetPreparer:
     """Feature-level Fusion数据集准备器"""
 
-    def __init__(self, output_dir: str = 'datasets/fusion_training'):
+    def __init__(self, output_dir: str = 'datasets/fusion_training', use_model_dehazing: bool = True):
         """
         Args:
             output_dir: 输出目录
+            use_model_dehazing: 是否使用模型生成的去雾图作为训练数据（True: 使用模型，False: 使用GT清晰图）
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.use_model_dehazing = use_model_dehazing
+        
+        if self.use_model_dehazing:
+            print("初始化 CoA 去雾模型用于生成训练数据...")
+            self.dehazer = CoADehazer()
+            print("模型初始化完成")
 
         # 创建子目录
         self.dirs = {
@@ -107,10 +116,25 @@ class FusionDatasetPreparer:
                 dst_original = self.dirs[f'{split_name}_original'] / f"{img_name}.jpg"
                 shutil.copy2(src_hazy, dst_original)
 
-                # 去雾图（清晰图像作为去雾后的目标）
-                src_clear = clear_dir / f"{img_name}.jpg"
+                # 去雾图处理
                 dst_dehazed = self.dirs[f'{split_name}_dehazed'] / f"{img_name}.jpg"
-                shutil.copy2(src_clear, dst_dehazed)
+                
+                if self.use_model_dehazing:
+                    # 使用模型生成去雾图（推荐：使训练和推理的数据分布一致）
+                    img_hazy = cv2.imread(str(src_hazy))
+                    if img_hazy is None:
+                        print(f"Warning: 无法读取图像 {src_hazy}")
+                        continue
+                    # 使用 CoA 模型去雾
+                    img_dehazed = self.dehazer.process_opencv(img_hazy)
+                    cv2.imwrite(str(dst_dehazed), img_dehazed)
+                else:
+                    # 使用GT清晰图（仅作参考对比）
+                    src_clear = clear_dir / f"{img_name}.jpg"
+                    if src_clear.exists():
+                        shutil.copy2(src_clear, dst_dehazed)
+                    else:
+                        print(f"Warning: 找不到对应的清晰图像 {src_clear}")
 
                 # 标注
                 src_label = label_dir / f"{img_name}.txt"
