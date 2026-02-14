@@ -9,7 +9,8 @@ import numpy as np
 from pathlib import Path
 import argparse
 from ultralytics import YOLO
-from yolosystem.dehazing import DehazingModule
+# from yolosystem.dehazing import DehazingModule
+from yolosystem.coa_adapter import CoADehazer
 
 
 class SimpleFusionDetector:
@@ -24,11 +25,14 @@ class SimpleFusionDetector:
         """
         print(f"加载YOLO模型: {model_path}")
         self.yolo = YOLO(model_path)
-        self.dehazer = DehazingModule()
+        # self.dehazer = DehazingModule()
+        print("加载 CoA 去雾模型 (支持文本指导)...")
+        self.dehazer = CoADehazer(load_clip=True)
         print("✓ 模型加载完成")
 
     def detect_image(self, img_path: str, output_dir: str = 'outputs/inference',
-                    conf_threshold: float = 0.25, fusion_weight: float = 0.7):
+                    conf_threshold: float = 0.25, fusion_weight: float = 0.7, 
+                    dehaze_prompt: str = None):
         """
         对单张图像进行融合检测
 
@@ -37,6 +41,7 @@ class SimpleFusionDetector:
             output_dir: 输出目录
             conf_threshold: 置信度阈值
             fusion_weight: 去雾图权重（0-1），有雾图权重为1-fusion_weight
+            dehaze_prompt: (可选) 用于指导去雾的文本描述
 
         Returns:
             检测结果统计
@@ -56,7 +61,13 @@ class SimpleFusionDetector:
 
         # 去雾
         print("正在去雾...")
-        img_dehazed, _ = self.dehazer.dehaze(img_rgb)
+        
+        # 使用 CoA 去雾 (支持 prompt)
+        if dehaze_prompt:
+             print(f"应用文本指导: '{dehaze_prompt}'")
+             img_dehazed = self.dehazer.process_opencv(img, prompt=dehaze_prompt)
+        else:
+             img_dehazed = self.dehazer.process_opencv(img)
 
         # 融合图像（简单的加权融合）
         print(f"融合图像（去雾权重: {fusion_weight:.1%}）...")
@@ -143,7 +154,8 @@ class SimpleFusionDetector:
         cv2.imwrite(str(save_path), cv2.cvtColor(comparison, cv2.COLOR_RGB2BGR))
 
     def detect_video(self, video_path: str, output_path: str = 'output.mp4',
-                    conf_threshold: float = 0.25, fusion_weight: float = 0.7):
+                    conf_threshold: float = 0.25, fusion_weight: float = 0.7,
+                    dehaze_prompt: str = None):
         """
         对视频进行融合检测
 
@@ -152,6 +164,7 @@ class SimpleFusionDetector:
             output_path: 输出视频路径
             conf_threshold: 置信度阈值
             fusion_weight: 去雾图权重
+            dehaze_prompt: (可选) 用于指导去雾的文本描述
         """
         cap = cv2.VideoCapture(video_path)
 
@@ -182,7 +195,15 @@ class SimpleFusionDetector:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             # 去雾
-            frame_dehazed, _ = self.dehazer.dehaze(frame_rgb)
+            # frame_dehazed, _ = self.dehazer.dehaze(frame_rgb)
+            # 视频暂不支持逐帧文本优化，太慢
+            if dehaze_prompt and frame_idx == 1:
+                print(f"\n注意：视频模式下暂不支持逐帧文本优化，仅使用默认 CoA 去雾。")
+            
+            # 使用 CoA 适配器 (输入必须是 BGR for process_opencv, or RGB)
+            # self.dehazer.process_opencv 接受 BGR
+            frame_dehazed_bgr = self.dehazer.process_opencv(frame)
+            frame_dehazed = cv2.cvtColor(frame_dehazed_bgr, cv2.COLOR_BGR2RGB)
 
             # 融合
             frame_fusion = (frame_rgb * (1 - fusion_weight) +
@@ -219,7 +240,8 @@ class SimpleFusionDetector:
         print(f"  平均每帧: {total_detections/frame_idx:.1f} 个目标")
 
     def detect_folder(self, folder_path: str, output_dir: str = 'outputs/batch',
-                     conf_threshold: float = 0.25, fusion_weight: float = 0.7):
+                     conf_threshold: float = 0.25, fusion_weight: float = 0.7,
+                     dehaze_prompt: str = None):
         """
         批量处理文件夹中的图像
 
@@ -228,6 +250,7 @@ class SimpleFusionDetector:
             output_dir: 输出目录
             conf_threshold: 置信度阈值
             fusion_weight: 去雾图权重
+            dehaze_prompt: (可选) 用于指导去雾的文本描述
         """
         folder = Path(folder_path)
         img_files = list(folder.glob('*.jpg')) + list(folder.glob('*.png'))
@@ -245,7 +268,8 @@ class SimpleFusionDetector:
                     str(img_file),
                     output_dir=output_dir,
                     conf_threshold=conf_threshold,
-                    fusion_weight=fusion_weight
+                    fusion_weight=fusion_weight,
+                    dehaze_prompt=dehaze_prompt
                 )
                 all_stats.append(stats)
             except Exception as e:
@@ -278,6 +302,8 @@ def main():
                        help='置信度阈值')
     parser.add_argument('--fusion-weight', type=float, default=0.7,
                        help='去雾图权重（0-1）')
+    parser.add_argument('--prompt', type=str, default=None,
+                       help='(可选) 用于指导图像去雾的文本描述 (支持英文)')
     parser.add_argument('--mode', type=str, default='image',
                        choices=['image', 'video', 'folder'],
                        help='处理模式')
@@ -293,21 +319,24 @@ def main():
             img_path=args.input,
             output_dir=args.output,
             conf_threshold=args.conf,
-            fusion_weight=args.fusion_weight
+            fusion_weight=args.fusion_weight,
+            dehaze_prompt=args.prompt
         )
     elif args.mode == 'video':
         detector.detect_video(
             video_path=args.input,
             output_path=args.output,
             conf_threshold=args.conf,
-            fusion_weight=args.fusion_weight
+            fusion_weight=args.fusion_weight,
+            dehaze_prompt=args.prompt
         )
     elif args.mode == 'folder':
         detector.detect_folder(
             folder_path=args.input,
             output_dir=args.output,
             conf_threshold=args.conf,
-            fusion_weight=args.fusion_weight
+            fusion_weight=args.fusion_weight,
+            dehaze_prompt=args.prompt
         )
 
 
