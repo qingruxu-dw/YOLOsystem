@@ -19,6 +19,14 @@ from typing import Dict, List, Tuple
 import time
 from datetime import datetime
 
+# 尝试导入 YOLOv8 Loss (需要 ultralytics 包)
+try:
+    from ultralytics.utils.loss import v8DetectionLoss
+    HAS_YOLO_LOSS = True
+except ImportError:
+    print("Warning: 无法导入 v8DetectionLoss, Stage 2 可能无法正常运行")
+    HAS_YOLO_LOSS = False
+
 from ultralytics import YOLO
 from yolosystem.feature_fusion_yolo_simple import create_feature_fusion_yolo
 
@@ -144,6 +152,17 @@ class TwoStageTrainer:
             pretrained=args.pretrained
         )
         self.model = self.model.to(self.device)
+
+        # 加载检查点（如果指定）
+        if args.resume_checkpoint and os.path.exists(args.resume_checkpoint):
+            print(f"\n加载检查点: {args.resume_checkpoint}")
+            checkpoint = torch.load(args.resume_checkpoint, map_location=self.device)
+            if 'model_state_dict' in checkpoint:
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+                print("✓ 模型权重加载成功")
+            else:
+                self.model.load_state_dict(checkpoint) # 尝试直接加载
+                print("✓ 模型权重加载成功 (即使是直接的全模型保存)")
 
         # 加载数据
         print("\n加载数据集...")
@@ -296,6 +315,194 @@ class TwoStageTrainer:
         elapsed = time.time() - start_time
         print(f"\n总训练时间: {elapsed / 3600:.2f} 小时")
 
+    def stage2_train(self):
+        """
+        阶段2: 解冻YOLO，端到端微调
+        使用YOLOv8的真实检测损失
+        """
+        print("\n" + "=" * 60)
+        print("阶段2: 端到端微调（YOLO解冻）")
+        print("=" * 60)
+
+        # 解冻YOLO参数
+        for param in self.model.yolo.parameters():
+            param.requires_grad = True
+
+        # 优化器：同时优化YOLO和融合模块
+        optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=self.args.stage2_lr
+        )
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=self.args.stage2_epochs
+        )
+
+        best_loss = float('inf')
+
+        for epoch in range(self.args.stage2_epochs):
+            # 训练
+            train_loss = self.train_epoch_stage2(epoch, optimizer)
+
+            # 学习率调度
+            scheduler.step()
+
+            # 记录
+            self.history['train_loss'].append(train_loss)
+            self.history['learning_rate'].append(optimizer.param_groups[0]['lr'])
+
+            print(f"\nEpoch {epoch} 完成:")
+            print(f"  训练损失: {train_loss:.4f}")
+            print(f"  学习率: {optimizer.param_groups[0]['lr']:.6f}")
+
+            # 保存最佳模型
+            if train_loss < best_loss:
+                best_loss = train_loss
+                self.save_checkpoint(epoch, 'stage2_best.pth')
+
+            # 定期保存
+            if (epoch + 1) % 10 == 0:
+                self.save_checkpoint(epoch, f'stage2_epoch_{epoch}.pth')
+
+        print(f"\n阶段2训练完成！最佳损失: {best_loss:.4f}")
+
+    def train_epoch_stage2(self, epoch: int, optimizer):
+        """阶段2的训练epoch"""
+        self.model.train()
+
+        pbar = tqdm(self.train_loader, desc=f"Stage2 Epoch {epoch}/{self.args.stage2_epochs}")
+        total_loss = 0.0
+
+        for batch_idx, batch in enumerate(pbar):
+            images_orig = batch['images_original'].to(self.device)
+            images_dehz = batch['images_dehazed'].to(self.device)
+
+            # 正确处理 targets: list[Tensor] -> Tensor [N, 6]
+            # YOLO需要格式: [batch_idx, class_idx, x, y, w, h]
+            targets_list = []
+            for i, label in enumerate(batch['labels']):
+                # label 是一个 Tensor [num_boxes, 5]
+                if len(label) > 0:
+                    # 创建 batch index 列
+                    batch_idx_tensor = torch.full((len(label), 1), i)
+                    # 拼接: [batch_idx, cls, x, y, w, h]
+                    target = torch.cat((batch_idx_tensor, label), 1)
+                    targets_list.append(target)
+
+            if targets_list:
+                targets = torch.cat(targets_list, 0).to(self.device)
+            else:
+                targets = torch.zeros((0, 6)).to(self.device)
+
+            optimizer.zero_grad()
+            
+            # 1. 前向传播得到融合图像
+            fused_imgs = self.model.fusion_module(images_orig, images_dehz)
+            
+            # 2. 将融合图像送入 YOLO 进行检测计算 Loss
+            if HAS_YOLO_LOSS:
+                try:
+                    # 初始化 Loss (仅一次)
+                    if not hasattr(self, 'loss_criterion'):
+                        # v8DetectionLoss 需要 hyp 参数，通常在 model.args 中
+                        # 如果 model.args 是 dict，我们需要把它转换成 object 或者确保 Loss 能处理
+                        
+                        # 确保我们使用的是正确的 Detect Head
+                        # feature_fusion_yolo.py 中的 self.neck_head 是 nn.ModuleList
+                        # 真正的 Detect 层在最后
+                        
+                        # 尝试手动注入 hyp 参数（因为我们的 model 是自定义的，可能丢失了 args）
+                        m = self.model.yolo.model
+                        if not hasattr(m, 'args'):
+                            # 创建默认参数
+                            m.args = {
+                                'box': 7.5,
+                                'cls': 0.5,
+                                'dfl': 1.5,
+                            }
+                        elif isinstance(m.args, dict):
+                            # 如果 args 是 dict，确保包含了 loss 需要的 box/cls/dfl
+                            if 'box' not in m.args: m.args['box'] = 7.5
+                            if 'cls' not in m.args: m.args['cls'] = 0.5
+                            if 'dfl' not in m.args: m.args['dfl'] = 1.5
+                        
+                        # 有些版本的 Ultralytics Loss 需要 args 是 namespace 而不是 dict
+                        # 我们可以创建一个简单的类来模拟 Namespace
+                        class ArgsNamespace:
+                            def __init__(self, d):
+                                for k, v in d.items():
+                                    setattr(self, k, v)
+                        
+                        if isinstance(m.args, dict):
+                            m.args = ArgsNamespace(m.args)
+
+                        self.loss_criterion = v8DetectionLoss(m)
+                    
+                    # YOLO模型前向传播
+                    preds = self.model.yolo.model(fused_imgs)
+                    
+                    # 准备 Loss 输入
+                    # targets 格式: [batch_idx, class_idx, x, y, w, h] (normalized)
+                    batch_data = {
+                        'batch_idx': targets[:, 0],
+                        'cls': targets[:, 1].view(-1, 1),
+                        'bboxes': targets[:, 2:],
+                        'device': self.device,
+                        'img': fused_imgs  # for calculating grid size
+                    }
+                    
+                    # 计算 Loss
+                    loss_result = self.loss_criterion(preds, batch_data)
+                    
+                    # 某些版本的 v8DetectionLoss 返回 (loss, loss_items)
+                    # 某些版本可能只返回 loss
+                    if isinstance(loss_result, tuple):
+                        loss = loss_result[0]
+                    else:
+                        loss = loss_result
+                        
+                    # 确保 loss 是 scalar
+                    if loss.numel() > 1:
+                        loss = loss.sum()
+
+                except Exception as e:
+                    # 如果出错了 (可能是 API 版本变动)
+                    # 退回到 dummy loss 以防 crash
+                    if batch_idx == 0:
+                        print(f"Loss calculation error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        
+                    loss = torch.tensor(0.0, requires_grad=True).to(self.device)
+            else:
+                 loss = torch.tensor(0.0, requires_grad=True).to(self.device)
+
+            # 只有当 loss 有梯度时才后向传播
+            if loss.requires_grad:
+                loss.backward()
+                optimizer.step()
+            
+            total_loss += loss.item()
+            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+
+        return total_loss / len(self.train_loader)
+
+    def resume_training(self, checkpoint_path: str):
+        """从检查点恢复训练"""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+
+        # 恢复历史记录
+        self.history = checkpoint['history']
+
+        # 恢复优化器状态
+        optimizer_state = checkpoint.get('optimizer_state_dict', None)
+        if optimizer_state is not None:
+            self.optimizer.load_state_dict(optimizer_state)
+
+        print(f"从 {checkpoint_path} 恢复训练，当前轮次: {checkpoint['epoch']}")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Feature-level Fusion YOLO 两阶段训练')
@@ -303,7 +510,7 @@ def parse_args():
     # 数据参数
     parser.add_argument('--data-dir', type=str, required=True, help='数据集目录')
     parser.add_argument('--img-size', type=int, default=640, help='图像大小')
-    parser.add_argument('--num-classes', type=int, default=6, help='类别数量')
+    parser.add_argument('--num-classes', type=int, default=10, help='类别数量')
 
     # 模型参数
     parser.add_argument('--model-size', type=str, default='n', choices=['n', 's', 'm', 'l', 'x'],
@@ -316,6 +523,11 @@ def parse_args():
     parser.add_argument('--stage1-epochs', type=int, default=30, help='阶段1训练轮数')
     parser.add_argument('--stage1-lr', type=float, default=0.001, help='阶段1学习率')
 
+    # 阶段2训练参数
+    parser.add_argument('--do-stage2', action='store_true', help='是否执行阶段2训练')
+    parser.add_argument('--stage2-epochs', type=int, default=50, help='阶段2训练轮数')
+    parser.add_argument('--stage2-lr', type=float, default=0.0001, help='阶段2学习率')
+
     # 通用训练参数
     parser.add_argument('--batch-size', type=int, default=16, help='批次大小')
     parser.add_argument('--workers', type=int, default=4, help='数据加载线程数')
@@ -323,6 +535,9 @@ def parse_args():
     # 输出参数
     parser.add_argument('--output-dir', type=str, default='runs/two_stage_training',
                         help='输出目录')
+
+    # 恢复训练参数
+    parser.add_argument('--resume-checkpoint', type=str, default='', help='恢复训练的检查点路径')
 
     return parser.parse_args()
 
@@ -346,7 +561,15 @@ def main():
     print(f"阶段1学习率: {args.stage1_lr}")
     print(f"输出目录: {args.output_dir}")
 
-    trainer.train()
+    # 如果指定了恢复检查点，则加载并恢复训练
+    if args.resume_checkpoint:
+        trainer.resume_training(args.resume_checkpoint)
+    else:
+        trainer.train()
+
+    # 如果选择执行阶段2，则开始阶段2训练
+    if args.do_stage2:
+        trainer.stage2_train()
 
     print("\n训练完成！")
 

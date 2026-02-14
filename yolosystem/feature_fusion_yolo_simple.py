@@ -130,11 +130,9 @@ class FeatureFusionYOLO(nn.Module):
         """重写train方法"""
         self.training = mode
         self.fusion_module.train(mode)
-        # 只设置YOLO内部模型的训练模式
-        if hasattr(self.yolo, 'model'):
-            for module in self.yolo.model.modules():
-                if isinstance(module, (nn.Conv2d, nn.BatchNorm2d, nn.Dropout)):
-                    module.train(mode)
+        # 确保整个 YOLO 模型都切换到正确的模式
+        if hasattr(self, 'yolo') and hasattr(self.yolo, 'model'):
+            self.yolo.model.train(mode)
         return self
 
     def eval(self):

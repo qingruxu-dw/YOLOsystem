@@ -6,6 +6,7 @@ import numpy as np
 import sys
 import os
 from pathlib import Path
+import cv2  # Add this import
 
 # 添加 CoA 目录到系统路径，以便可以导入其中的模块
 current_dir = os.path.dirname(os.path.abspath(__file__))

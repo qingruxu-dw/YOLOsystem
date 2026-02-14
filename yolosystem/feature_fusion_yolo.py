@@ -12,6 +12,7 @@ Feature-level Fusion YOLO Network
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math  # Add math import
 from ultralytics import YOLO
 from ultralytics.nn.modules import Conv, C2f, SPPF, Detect
 from typing import List, Tuple, Optional
@@ -218,6 +219,55 @@ class FeatureFusionYOLO(nn.Module):
 
         self.num_classes = num_classes
         self.fusion_layers = fusion_layers
+        
+        # 自动适配 Head 的类别数
+        self._update_detect_head(num_classes)
+
+    def _update_detect_head(self, num_classes):
+        """
+        根据指定的类别数自动更新Detect Head
+        当预训练模型类别数(80)与当前数据类别数不一致时，
+        自动替换最后分类层的卷积通道。
+        """
+        # 遍历 neck_head 找到 Detect 层
+        for module in self.neck_head:
+            if isinstance(module, Detect):
+                if module.nc != num_classes:
+                    print(f"自动适配: Detect Head 类别数从 {module.nc} 更新为 {num_classes}")
+                    
+                    # 1. 更新属性
+                    module.nc = num_classes
+                    
+                    # 2. 更新分类分支的卷积层 (cv3)
+                    # Detect 层的 cv3 是一个 ModuleList，包含针对不同尺度的分类头
+                    # 每个元素通常是一个 Sequential
+                    for i, conv_module in enumerate(module.cv3):
+                        # 在 YOLOv8/11 中, cv3 的最后一层是负责输出类别概率的 Conv2d
+                        # 结构: [Conv, Conv, ..., Conv2d(c2, nc, 1)]
+                        
+                        # 获取最后一层
+                        last_layer = conv_module[-1]
+                        
+                        if isinstance(last_layer, nn.Conv2d):
+                            # 获取输入通道数
+                            in_channels = last_layer.in_channels
+                            
+                            # 创建新的卷积层 (输出通道 = num_classes)
+                            # 注意：这里不需要放到 device，因为整个 model 之后会被 .to(device)
+                            new_conv = nn.Conv2d(in_channels, num_classes, 1, bias=True)
+                            
+                            # 初始化权重 (参考 Ultralytics 的初始化策略)
+                            # 这里的 bias 初始化有助于训练初期的稳定性
+                            stride = module.stride[i] if hasattr(module, 'stride') else 32
+                            # 这里的 bias 初始化是一个经验值，模拟 YOLO 的初始化
+                            b = new_conv.bias.view(1, -1)
+                            b.data.fill_(-math.log((1 - 0.01) / 0.01))
+                            new_conv.bias = torch.nn.Parameter(b.view(-1))
+                            
+                            # 替换旧层
+                            conv_module[-1] = new_conv
+                            
+                break
 
     def train(self, mode: bool = True):
         """

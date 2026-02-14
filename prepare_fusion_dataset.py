@@ -67,9 +67,9 @@ class FusionDatasetPreparer:
         print("=" * 60)
 
         # 数据路径
-        clear_dir = Path('project(labelimg)/dataset/joint_train/clear_school')
-        hazy_dir = Path('project(labelimg)/dataset/joint_train/hazy_school')
-        label_dir = Path('project(labelimg)/dataset(label)/labels')
+        clear_dir = Path('/data/home/sczd119/run/DehazyDet/dataset/VisDrone/VisDrone2019-DET-train/clear')
+        hazy_dir = Path('/data/home/sczd119/run/DehazyDet/dataset/VisDrone/VisDrone2019-DET-train/hazy')
+        label_dir = Path('/data/home/sczd119/run/DehazyDet/dataset/VisDrone/VisDrone2019-DET-train/labels')
 
         # 获取所有图像文件名
         image_files = sorted([f.stem for f in clear_dir.glob('*.jpg')])
@@ -169,7 +169,9 @@ class FusionDatasetPreparer:
         print("⚠️  Foggy Cityscapes处理功能待实现")
         return 0, 0, 0
 
-    def create_dataset_yaml(self, num_classes: int = 6):
+    # def create_dataset_yaml(self, num_classes: int = 6):
+    #使用VisDrone数据集进行训练尝试
+    def create_dataset_yaml(self, num_classes: int = 10):
         """
         创建YOLO格式的数据集配置文件
 
@@ -181,8 +183,19 @@ class FusionDatasetPreparer:
         print("=" * 60)
 
         # 类别名称
-        class_names = ['car', 'motorcycle', 'person', 'truck', 'bus', 'bicycle']
-
+        # class_names = ['car', 'motorcycle', 'person', 'truck', 'bus', 'bicycle']
+        class_names = [
+            'pedestrian',       # 0
+            'people',           # 1
+            'bicycle',          # 2
+            'car',              # 3
+            'van',              # 4
+            'truck',            # 5
+            'tricycle',         # 6
+            'awning-tricycle',  # 7
+            'bus',              # 8
+            'motor'             # 9
+        ]
         # 数据集配置
         dataset_config = {
             'path': str(self.output_dir.absolute()),
@@ -226,7 +239,8 @@ class FusionDatasetPreparer:
 
         # 统计类别分布
         print("\n类别分布统计:")
-        class_counts = {i: 0 for i in range(6)}
+        # class_counts = {i: 0 for i in range(6)}
+        class_counts = {i: 0 for i in range(10)}  # 1. 改为 10
 
         for split in ['train', 'val', 'test']:
             label_dir = self.dirs[f'{split}_labels']
@@ -237,7 +251,8 @@ class FusionDatasetPreparer:
                             class_id = int(line.split()[0])
                             class_counts[class_id] += 1
 
-        class_names = ['car', 'motorcycle', 'person', 'truck', 'bus', 'bicycle']
+        # class_names = ['car', 'motorcycle', 'person', 'truck', 'bus', 'bicycle']
+        class_names = ['pedestrian', 'people', 'bicycle', 'car', 'van', 'truck', 'tricycle', 'awning-tricycle', 'bus', 'motor']
         for class_id, count in class_counts.items():
             print(f"  {class_names[class_id]}: {count}")
 
@@ -281,7 +296,7 @@ def main():
     print(f"  验证集: {n_val + n_val_fc} 对")
     print(f"  测试集: {n_test + n_test_fc} 对")
     print(f"\n配置文件: {config_path}")
-    print(f"\n下一步: 使用 train_feature_fusion.py 开始训练")
+    print(f"\n下一步: 使用 train_feature_fusion_v2.py 开始训练")
 
 
 if __name__ == '__main__':

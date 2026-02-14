@@ -8,7 +8,7 @@
 
 ### 方法1：简单融合检测（推荐）⭐
 
-使用预训练YOLO + 图像级融合，无需训练，开箱即用。
+使用预训练YOLO + 图像级融合，无需训练，开箱即用。**现已支持文本引导去雾！**
 
 #### 单张图像检测
 
@@ -21,12 +21,26 @@ python simple_fusion_inference.py \
     --fusion-weight 0.7
 ```
 
+#### 🔥 进阶：使用文本引导优化去雾
+
+通过 `--prompt` 参数输入英文描述，利用 CLIP 模型针对该图片优化去雾效果：
+
+```bash
+python simple_fusion_inference.py \
+    --input test_image.jpg \
+    --mode image \
+    --prompt "Sharp details, clear sky, no smog"
+```
+
+*注意：启用 prompt 会增加每张图片的推理耗时。*
+
 **参数说明**：
 - `--input`: 输入图像路径
 - `--output`: 输出目录
 - `--mode`: 处理模式（image/video/folder）
 - `--conf`: 置信度阈值（0-1）
 - `--fusion-weight`: 去雾图权重（0-1），推荐0.7
+- `--prompt`: (可选) 英文文本引导词，如 "High contrast, clear details"
 
 **输出文件**：
 - `{name}_foggy.jpg` - 有雾图检测结果
@@ -68,7 +82,8 @@ python inference_fusion.py \
     --input test_image.jpg \
     --output output.jpg \
     --model-size s \
-    --conf 0.25
+    --conf 0.25 \
+    --prompt "Sunny day, clear street"
 ```
 
 **参数说明**：
@@ -77,6 +92,7 @@ python inference_fusion.py \
 - `--output`: 输出路径
 - `--model-size`: YOLO模型大小（n/s/m/l/x）
 - `--conf`: 置信度阈值
+- `--prompt`: (可选) 英文文本引导词
 
 ---
 
@@ -85,20 +101,25 @@ python inference_fusion.py \
 ### 示例1：测试单张雾天图像
 
 ```bash
-# 使用简单融合（推荐）
+# 使用简单融合（推荐）+ 文本增强
 python simple_fusion_inference.py \
     --input examples/foggy_street.jpg \
     --output outputs/demo \
-    --mode image
+    --mode image \
+    --prompt "Crystal clear street view"
 ```
 
 **预期输出**：
 ```
 加载YOLO模型: yolo11n.pt
+加载 CoA 去雾模型 (支持文本指导)...
 ✓ 模型加载完成
 
 处理图像: examples/foggy_street.jpg
 正在去雾...
+应用文本指导: 'Crystal clear street view'
+正在使用文本 'Crystal clear street view' 优化去雾 (steps=15)...
+Step 5/15, Loss: 0.7123...
 融合图像（去雾权重: 70.0%）...
 正在检测...
 
@@ -179,6 +200,7 @@ pip install torch torchvision
 pip install ultralytics
 pip install opencv-python
 pip install numpy
+pip install ftfy regex tqdm  # 文本指导功能依赖
 ```
 
 ### 可选依赖
