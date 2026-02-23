@@ -67,9 +67,14 @@ class FusionInference:
         return img_tensor.to(self.device)
 
 
-    def detect(self, img_path: str, conf_threshold: float = 0.25, save_path: str = None):
+    def detect(self, img_path: str, conf_threshold: float = 0.25, save_path: str = None, dehaze_prompt: str = None):
         """
         对单张图像进行检测
+        Args:
+            img_path: 图像路径
+            conf_threshold: 置信度阈值
+            save_path: 结果保存路径
+            dehaze_prompt: (可选) 用于指导去雾的文本描述，如 "Clear street scene without fog"
         """
         # 读取图像
         img = cv2.imread(img_path)
@@ -80,7 +85,11 @@ class FusionInference:
 
         # 1. 去雾 (BGR)
         print("正在去雾 (CoA)...")
-        img_dehazed_bgr = self.dehazer.process_opencv(img)
+        if dehaze_prompt:
+             print(f"应用文本指导: '{dehaze_prompt}'")
+             img_dehazed_bgr = self.dehazer.process_opencv(img, prompt=dehaze_prompt)
+        else:
+             img_dehazed_bgr = self.dehazer.process_opencv(img)
         
         # 2. 转换颜色空间为 RGB (供 YOLO 推理)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -180,7 +189,7 @@ class FusionInference:
         return vis_img
 
 
-    def detect_video(self, video_path: str, output_path: str, conf_threshold: float = 0.25):
+    def detect_video(self, video_path: str, output_path: str, conf_threshold: float = 0.25, dehaze_prompt: str = None):
         """
         对视频进行检测
         """
@@ -210,6 +219,10 @@ class FusionInference:
 
             # 去雾和检测
             # 注意：这里我们复用 detect() 的核心逻辑，但为了效率直接处理 frame
+            # 视频帧通常不建议逐帧做 TTA (太慢)，除非非常有必要
+            if dehaze_prompt and frame_idx == 1:
+                print(f"\n注意：视频模式下暂不支持逐帧文本优化（速度过慢），仅使用默认去雾。")
+                
             img_dehazed_bgr = self.dehazer.process_opencv(frame)
             
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -242,6 +255,7 @@ def main():
     parser.add_argument('--model-size', type=str, default='n', choices=['n', 's', 'm', 'l', 'x'], help='YOLO模型规模')
     parser.add_argument('--conf', type=float, default=0.25, help='置信度阈值')
     parser.add_argument('--video', action='store_true', help='如果输入是视频请加上此参数')
+    parser.add_argument('--prompt', type=str, default=None, help='(可选) 用于指导图像去雾的文本描述')
 
     args = parser.parse_args()
 
@@ -258,13 +272,15 @@ def main():
         inferencer.detect_video(
             video_path=args.input,
             output_path=output_path,
-            conf_threshold=args.conf
+            conf_threshold=args.conf,
+            dehaze_prompt=args.prompt
         )
     else:
         inferencer.detect(
             img_path=args.input,
             conf_threshold=args.conf,
-            save_path=args.output
+            save_path=args.output,
+            dehaze_prompt=args.prompt
         )
 
 if __name__ == '__main__':

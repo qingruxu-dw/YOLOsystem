@@ -89,8 +89,8 @@ python3 train_feature_fusion_v2.py \
 **对比测试命令：**
 ```bash
 python3 test_fusion_detection.py \
-    --checkpoint runs/two_stage_training/stage2_best.pth \
-    --yolo-weights runs/train_visdrone/yolov11_baseline/weights/best.pt \
+    --checkpoint YOLOsystem/stage2_best.pth \
+    --yolo-weights yolov11_visdrone.pt \
     --data-dir datasets/fusion_training \
     --model-size n \
     --conf-threshold 0.25
@@ -130,6 +130,7 @@ python3 test_fusion_detection.py \
 | `train_visdrone_yolov11.py` | 训练标准 YOLOv11 对照组 |
 | `datasets/visdrone.yaml.example` | 数据集配置文件模板 |
 | `test_fusion_detection.py` | 最终对比测试脚本(原图 vs 去雾图 vs 融合图) |
-| `inference_fusion.py` | 单张图/视频的融合检测推理(带可视化) |
+| `inference_fusion.py` | 单张图/视频的融合检测推理(带可视化，**支持 Text-Guided Dehazing**) |
+| `simple_fusion_inference.py` | 简单推理脚本 (**支持 Text-Guided Dehazing**) |
 
 ---

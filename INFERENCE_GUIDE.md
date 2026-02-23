@@ -78,10 +78,10 @@ python simple_fusion_inference.py \
 
 ```bash
 python inference_fusion.py \
-    --checkpoint runs/fusion_fixed/final_stage1.pth \
+    --checkpoint stage2_best.pth \
     --input test_image.jpg \
     --output output.jpg \
-    --model-size s \
+    --model-size n \
     --conf 0.25 \
     --prompt "Sunny day, clear street"
 ```

@@ -23,10 +23,15 @@
 
 ## 🎯 核心创新
 
-**Feature-level Fusion（特征层融合）**
+**1. Feature-level Fusion（特征层融合）**
 - 双路输入：同时处理有雾图像和去雾图像
 - 智能融合：可学习的融合权重，自适应平衡真实性和清晰度
 - 显著提升：浓雾场景检测性能提升 **+13.0%**
+
+**2. Text-Guided Dehazing（文本引导去雾）**
+- 引入 CLIP 模型进行 Test-Time Adaptation
+- 允许通过自然语言（如 "Sharp, clear details"）指导去雾过程
+- 针对每一张图片进行自适应优化，提升去雾后的语义清晰度
 
 ---
 
@@ -65,9 +70,12 @@ pip install torch torchvision
 pip install ultralytics
 pip install opencv-python
 pip install numpy
+pip install ftfy regex tqdm  # CLIP 所需依赖
 ```
 
 #### 步骤2：测试单张图像
+
+**基础用法：**
 
 ```bash
 python simple_fusion_inference.py \
@@ -77,14 +85,23 @@ python simple_fusion_inference.py \
     --fusion-weight 0.7
 ```
 
+**🔥 进阶用法：文本引导去雾**
+
+现在您可以通过添加 `--prompt` 参数来优化去雾效果：
+
+```bash
+python simple_fusion_inference.py \
+    --input test_image.jpg \
+    --prompt "Sharp, high contrast, clear details without fog"
+```
+
 **参数说明**：
 - `--input`: 输入图像路径
 - `--output`: 输出目录
 - `--mode`: 处理模式（image/video/folder）
 - `--fusion-weight`: 去雾图权重（0-1），推荐0.7
-  - 0.0 = 只用有雾图
-  - 0.7 = 30%有雾图 + 70%去雾图（推荐）
-  - 1.0 = 只用去雾图
+- `--prompt`: (新增) 去雾指导文本，请使用英文（例如 "Sunny day", "Clear street"）
+  * 注意：启用此参数会稍微增加推理时间（每张图约增加几秒优化时间）
 
 **输出结果**：
 - `{name}_foggy.jpg` - 有雾图检测结果
