@@ -243,6 +243,9 @@ const next = () => {
   font-weight: 700;
   margin-bottom: 12px;
   background: linear-gradient(90deg, #fff, #8ec5fc);
+  /* 先写标准属性 */
+  background-clip: text;
+  /* 再写浏览器私有属性 */
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   letter-spacing: 1px;
