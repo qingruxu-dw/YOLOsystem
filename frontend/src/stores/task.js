@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
-import { uploadImage, startProcess, getTask, getDetections } from '@/utils/api'
+import { uploadImage, getDetections } from '@/utils/api'
 
 export const useTaskStore = defineStore('task', {
   state: () => ({
     // 文件与参数
     file: null,
     inputPreviewUrl: '',
-    dehazeStrength: 0.5,
+    dehazeStrength: 0.95,
     textPrompt: '',
 
     // 任务与状态
@@ -45,7 +45,7 @@ export const useTaskStore = defineStore('task', {
       this.uploading = true
       this.errorMessage = ''
       try {
-        const { data } = await uploadImage(this.file, mode, textPrompt)
+        const { data } = await uploadImage(this.file, mode, textPrompt, this.dehazeStrength)
         // 可选：后端返回上传后的资源ID或路径
         // 这里保持前端预览即可
         this.status = 'uploaded'
@@ -64,7 +64,7 @@ export const useTaskStore = defineStore('task', {
       this.status = 'processing'
       this.errorMessage = ''
       try {
-        const { data } = await uploadImage(this.file, mode, textPrompt)
+        const { data } = await uploadImage(this.file, mode, textPrompt, this.dehazeStrength)
         this.dehazeImageUrl = data?.dehazed || ''
         this.detectImageUrl = data?.detected || ''
         // 解析 basename：来自 original 路径 /api/image/{timestamp}/1_original_{basename}.jpg
@@ -101,17 +101,47 @@ export const useTaskStore = defineStore('task', {
         this.errorMessage = err?.response?.data?.error || err.message || '处理失败'
       }
     },
-    startPolling() {
-      /* 后端直接返回处理结果，暂不需要轮询 */
-    },
-    stopPolling() {
-      if (this.pollingTimer) {
-        clearInterval(this.pollingTimer)
-        this.pollingTimer = null
+    async loadHistory(item) {
+      this.status = 'processing'
+      this.errorMessage = ''
+      this.file = null 
+      // inputPreviewUrl needs to be set directly, bypass setFile logic
+      this.inputPreviewUrl = item.original
+      this.dehazeImageUrl = item.dehazed
+      this.detectImageUrl = item.detected
+      
+      // Attempt to load detections
+      try {
+        let basename = ''
+        // Extract basename from original url: /api/image/{timestamp}/1_original_{basename}.jpg
+        // Note: item.original might be full url or path
+        const m = item.original.match(/1_original_(.+)\.jpg$/)
+        if (m && m[1]) basename = m[1]
+        
+        if (item.timestamp && basename) {
+            const { data } = await getDetections(item.timestamp, basename)
+            const list = data?.list || []
+            this.detections = list
+            const map = {}
+            for (const d of list) {
+                const k = d.label || 'unknown'
+                map[k] = (map[k] || 0) + 1
+            }
+            this.detectionSummary = Object.keys(map).map(k => ({ label: k, count: map[k] }))
+        } else {
+            this.detections = []
+            this.detectionSummary = []
+        }
+      } catch (e) {
+          console.warn('Failed to load detection details for history item', e)
+          this.detections = []
+          this.detectionSummary = []
       }
+      
+      this.status = 'done'
+      this.processing = false
     },
     reset() {
-      this.stopPolling()
       this.file = null
       if (this.inputPreviewUrl) {
         try { URL.revokeObjectURL(this.inputPreviewUrl) } catch (e) {}

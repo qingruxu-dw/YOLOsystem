@@ -23,10 +23,28 @@
           <el-input
             v-model="textPrompt"
             type="textarea"
-            :rows="3"
-            placeholder="例如：'检测车辆'，'寻找远处的船'..."
+            :rows="2"
+            placeholder="请使用英文描述你期望得到的图像"
             class="guidance-input"
           />
+          <div class="prompt-pool mt12">
+            <span class="pool-label">常用场景：</span>
+            <div class="tags-wrapper">
+              <el-tag
+                v-for="item in promptPool"
+                :key="item.en"
+                class="prompt-tag"
+                type="info"
+                effect="light"
+                @click="applyPrompt(item)"
+              >
+                <div class="tag-content">
+                  <div class="tag-en">{{ item.en }}</div>
+                  <div class="tag-zh">{{ item.zh }}</div>
+                </div>
+              </el-tag>
+            </div>
+          </div>
           <div class="guidance-hint">
             提示：仅针对方案二（多模态引导）生效
           </div>
@@ -247,6 +265,12 @@
         </div>
       </el-main>
     </el-container>
+    
+    <HistoryPanel 
+      ref="historyPanelRef" 
+      mode="comparison" 
+      @select="onHistorySelect" 
+    />
   </div>
 </template>
 
@@ -254,14 +278,36 @@
 import { ref, reactive, computed } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import ImageUpload from '@/components/common/ImageUpload.vue'
-import { Document } from '@element-plus/icons-vue'
-import { uploadImage, getDetections } from '@/utils/api'
+import HistoryPanel from '@/components/common/HistoryPanel.vue'
+import { Document, Clock } from '@element-plus/icons-vue'
+import api, { uploadImage, getDetections } from '@/utils/api'
 import { ElMessage } from 'element-plus'
 
 const store = useTaskStore()
 const textPrompt = ref('')
 const processing = ref(false)
 const comparisonDone = ref(false)
+const historyPanelRef = ref(null)
+
+const openHistory = () => {
+  historyPanelRef.value?.open()
+}
+
+defineExpose({ openHistory })
+
+const promptPool = [
+  { zh: '清晰锐利', en: 'Clear, sharp photo without haze' },
+  { zh: '明亮干净', en: 'bright and clean' },
+  { zh: '无雾视野', en: 'Free from haze or fog' },
+  { zh: '高分辨率', en: 'High resolution and sharp details' },
+  { zh: '高对比度，清晰的细节', en: 'High contrast, clear details' },
+  { zh: '水晶般清晰', en: 'Crystal clear image' },
+  { zh: '色彩鲜艳', en: 'vivid colors' }
+]
+
+const applyPrompt = (item) => {
+  textPrompt.value = item.en
+}
 
 const baselineResult = reactive({
   dehazed: '',
@@ -419,6 +465,71 @@ const handleCompare = async () => {
   }
 }
 
+const onHistorySelect = async (item) => {
+  // item is { filename: 'foo.jpg', time: '...' }
+  if (!item.filename) return
+  
+  try {
+      const resp = await api.get('/history', {
+          params: { mode: 'comparison', filename: item.filename }
+      })
+      
+      if (resp.data.success && resp.data.comparison) {
+          const results = resp.data.comparison
+          resetResults()
+          
+          // Use the first available original image as preview
+          const any = results.baseline || results.basic || results.multimodal
+          if (any) {
+              store.inputPreviewUrl = any.original
+              // We don't have the File object, so store.file remains null or previous
+              // If we want to re-run, user needs to upload again or we fetch blob? 
+              // For history view, it's fine.
+          }
+          
+          // Update Baseline
+          if (results.baseline) {
+              await updateResult(baselineResult, results.baseline)
+          }
+          // Update Basic
+          if (results.basic) {
+              await updateResult(basicResult, results.basic)
+          }
+          // Update Multimodal
+          if (results.multimodal) {
+              await updateResult(multimodalResult, results.multimodal)
+              if (results.multimodal.params && results.multimodal.params.text_prompt) {
+                  textPrompt.value = results.multimodal.params.text_prompt
+              }
+          }
+          
+          comparisonDone.value = true
+          ElMessage.success('已加载历史对比结果')
+      }
+  } catch (e) {
+      console.error(e)
+      ElMessage.error('加载历史失败')
+  }
+}
+
+const updateResult = async (target, source) => {
+    target.dehazed = source.dehazed || source.original // baseline uses original as dehazed in UI logic
+    target.detected = source.detected
+    target.latency = 0 // History doesn't have latency stored, or maybe it does? 
+    // If backend returns 'latency' in history record (I didn't store it explicitly in DB but maybe I should have?)
+    // Currently I don't store latency in DB. So set to 0.
+    
+    if (source.timestamp && source.original) {
+        const m = source.original.match(/1_original_(.+)\.jpg$/)
+        const basename = m ? m[1] : ''
+        if (basename) {
+            const metrics = await parseDetections(source.timestamp, basename)
+            target.count = metrics.count
+            target.avgConf = metrics.avgConf
+        }
+    }
+}
+
 const exportReport = () => {
   window.print()
 }
@@ -480,6 +591,15 @@ const exportReport = () => {
   border-color: var(--accent-color);
   box-shadow: 0 0 0 1px var(--accent-color) inset;
 }
+
+.prompt-pool { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.pool-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.tags-wrapper { display: flex; flex-wrap: wrap; gap: 8px; }
+.prompt-tag { cursor: pointer; transition: all 0.2s; height: auto; padding: 4px 8px; }
+.prompt-tag:hover { color: var(--accent-color); border-color: var(--accent-color); background-color: rgba(114, 46, 209, 0.1); }
+.tag-content { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.tag-en { font-size: 12px; font-weight: 500; }
+.tag-zh { font-size: 10px; opacity: 0.8; }
 
 .main-area {
   padding: 0 0 20px 12px;

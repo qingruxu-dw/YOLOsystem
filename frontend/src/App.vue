@@ -1,19 +1,35 @@
 <template>
   <div id="app">
-    <Navigation />
-    <router-view />
+    <Navigation @open-history="onOpenHistory" />
+    <router-view v-slot="{ Component }">
+      <component :is="Component" ref="viewRef" />
+    </router-view>
   </div>
 </template>
 
-<script>
+<script setup>
+import { ref } from 'vue'
 import Navigation from "./components/layout/Navigation.vue";
 
-export default {
-  name: "App",
-  components: {
-    Navigation,
-  },
-};
+const viewRef = ref(null)
+
+const onOpenHistory = () => {
+  // viewRef is the component instance
+  // When using <script setup>, methods are not exposed by default
+  // But we use defineExpose in BaseView/MultimodalView/ComparisonView
+  
+  if (viewRef.value) {
+      // Direct access if exposed
+      if (typeof viewRef.value.openHistory === 'function') {
+          viewRef.value.openHistory()
+          return
+      }
+      // Access via internal instance if needed (sometimes helps in dev mode)
+      if (viewRef.value.$ && viewRef.value.$.exposed && viewRef.value.$.exposed.openHistory) {
+           viewRef.value.$.exposed.openHistory()
+      }
+  }
+}
 </script>
 
 <style>

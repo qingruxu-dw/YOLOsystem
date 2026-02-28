@@ -7,7 +7,9 @@
           <template #header>
             <div class="card-header">
               <span>{{ panelTitle }}</span>
-              <el-button size="small" :type="controlStatus.type" class="status-btn" plain>{{ controlStatus.text }}</el-button>
+              <div class="header-actions">
+                <el-button size="small" :type="controlStatus.type" class="status-btn" plain>{{ controlStatus.text }}</el-button>
+              </div>
             </div>
           </template>
           <ImageUpload @change="onFileChange" />
@@ -26,16 +28,17 @@
             </div>
             <div class="info-item mt-mini">
               <span class="label">目标检测：</span>
-              <el-tag size="small" effect="plain" type="warning">YOLOv8n</el-tag>
+              <el-tag size="small" effect="plain">YOLOv11n</el-tag>
             </div>
           </div>
 
           <div class="actions mt16">
-            <el-space :size="8">
+            <el-space direction="vertical" alignment="center" style="width: 100%">
               <el-button type="primary" :icon="Upload" :disabled="!store.file || store.processing" :loading="store.processing" @click="onStartProcess">开始处理</el-button>
               <el-button :icon="Refresh" :disabled="store.processing" @click="store.reset">重置</el-button>
             </el-space>
           </div>
+
           <div class="status mt16" v-if="store.status !== 'idle'">
             <el-tag v-if="store.status==='uploaded'" type="success">已上传</el-tag>
             <el-tag v-else-if="store.status==='processing'" type="warning">处理中...</el-tag>
@@ -129,25 +132,43 @@
         </el-row>
       </el-main>
     </el-container>
+    
+    <HistoryPanel 
+      ref="historyPanelRef" 
+      mode="basic" 
+      @select="onHistorySelect" 
+    />
   </div>
   
 </template>
 
 <script setup>
-import { onBeforeUnmount, computed } from 'vue'
-import { Upload, Refresh } from '@element-plus/icons-vue'
+import { onBeforeUnmount, computed, ref } from 'vue'
+import { Upload, Refresh, Clock } from '@element-plus/icons-vue'
 import { useTaskStore } from '@/stores/task'
 import ImageUpload from '@/components/common/ImageUpload.vue'
+import HistoryPanel from '@/components/common/HistoryPanel.vue'
 
 const store = useTaskStore()
+const historyPanelRef = ref(null)
+
+const openHistory = () => {
+  historyPanelRef.value?.open()
+}
+
+const onHistorySelect = (item) => {
+  store.loadHistory(item)
+}
+
+defineExpose({ openHistory })
 
 // 当前模式：基础模式；后续可根据路由或全局状态注入
 const currentMode = 'basic'
 const panelTitle = computed(() => {
   const map = {
-    basic: '基础模式控制面板',
-    multimodal: '多模态模式控制面板',
-    compare: '对比模式控制面板'
+    basic: '基础控制面板',
+    multimodal: '多模态控制面板',
+    compare: '对比控制面板'
   }
   return map[currentMode] || '控制面板'
 })
@@ -195,10 +216,6 @@ const onFileChange = (file) => {
 const onStartProcess = () => {
   store.startProcessTask({ mode: currentMode })
 }
-
-onBeforeUnmount(() => {
-  store.stopPolling()
-})
 </script>
 
 <style scoped>
@@ -242,6 +259,7 @@ onBeforeUnmount(() => {
 .control-card, .visual-card, .detect-card { box-shadow: var(--shadow); }
 .control-card:hover, .visual-card:hover, .detect-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
 .card-header { display:flex; align-items:center; justify-content:space-between; }
+.header-actions { display:flex; align-items:center; gap: 8px; }
 .status-btn { pointer-events: none; border-radius: 8px; }
 .img-box { border-radius: 10px; overflow: hidden; }
 /* el-image 内部 img 圆角 */

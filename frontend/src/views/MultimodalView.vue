@@ -7,7 +7,9 @@
           <template #header>
             <div class="card-header">
               <span>{{ panelTitle }}</span>
-              <el-button size="small" :type="controlStatus.type" class="status-btn" plain>{{ controlStatus.text }}</el-button>
+              <div class="header-actions">
+                <el-button size="small" :type="controlStatus.type" class="status-btn" plain>{{ controlStatus.text }}</el-button>
+              </div>
             </div>
           </template>
           <ImageUpload @change="onFileChange" />
@@ -21,8 +23,8 @@
             <el-input
               v-model="store.textPrompt"
               type="textarea"
-              :rows="3"
-              placeholder="请输入您要重点关注的目标，例如：‘检测车辆’，‘寻找船舶’..."
+              :rows="2"
+              placeholder="请使用英文描述你期望得到的图像"
               class="guidance-input"
             />
             <div class="prompt-pool mt12">
@@ -30,13 +32,16 @@
               <div class="tags-wrapper">
                 <el-tag
                   v-for="item in promptPool"
-                  :key="item"
+                  :key="item.en"
                   class="prompt-tag"
                   type="info"
                   effect="light"
                   @click="applyPrompt(item)"
                 >
-                  {{ item }}
+                  <div class="tag-content">
+                    <div class="tag-en">{{ item.en }}</div>
+                    <div class="tag-zh">{{ item.zh }}</div>
+                  </div>
                 </el-tag>
               </div>
             </div>
@@ -45,9 +50,17 @@
             </div>
           </div>
 
-          <div class="param-item mt16">
-            <div class="label">去雾强度：{{ (store.dehazeStrength).toFixed(2) }}</div>
-            <el-slider v-model="store.dehazeStrength" :min="0" :max="1" :step="0.05" :marks="dehazeMarks" :format-tooltip="formatStrength" />
+          <!-- 模型信息说明 -->
+          <div class="model-info mt16">
+            <div class="section-title">算法配置</div>
+            <div class="info-item">
+              <span class="label">去雾算法：</span>
+              <el-tag size="small" effect="plain" type="success">CoA (CLIP-Oriented)</el-tag>
+            </div>
+            <div class="info-item mt-mini">
+              <span class="label">目标检测：</span>
+              <el-tag size="small" effect="plain" type="warning">Feature Fusion YOLO</el-tag>
+            </div>
           </div>
 
           <div class="actions mt16">
@@ -153,21 +166,42 @@
         </el-row>
       </el-main>
     </el-container>
+    
+    <HistoryPanel 
+      ref="historyPanelRef" 
+      mode="multimodal" 
+      @select="onHistorySelect" 
+    />
   </div>
   
 </template>
 
 <script setup>
-import { onBeforeUnmount, computed } from 'vue'
-import { Upload, Refresh } from '@element-plus/icons-vue'
+import { onBeforeUnmount, computed, ref } from 'vue'
+import { Upload, Refresh, Clock } from '@element-plus/icons-vue'
 import { useTaskStore } from '@/stores/task'
 import ImageUpload from '@/components/common/ImageUpload.vue'
+import HistoryPanel from '@/components/common/HistoryPanel.vue'
 
 const store = useTaskStore()
+const historyPanelRef = ref(null)
+
+const openHistory = () => {
+  historyPanelRef.value?.open()
+}
+
+const onHistorySelect = (item) => {
+  store.loadHistory(item)
+  if (item.params && item.params.text_prompt) {
+      store.textPrompt = item.params.text_prompt
+  }
+}
+
+defineExpose({ openHistory })
 
 // 当前模式：多模态模式
 const currentMode = 'fusion'
-const panelTitle = '多模态模式控制面板'
+const panelTitle = '多模态控制面板'
 
 // 标题右侧状态按钮文案与样式
 const controlStatus = computed(() => {
@@ -197,20 +231,18 @@ const detectHeaderStatus = computed(() => {
 })
 
 
-const dehazeMarks = { 0: '0', 0.5: '0.5', 1: '1' }
-const formatStrength = (v) => Number(v).toFixed(2)
-
 const promptPool = [
-  '浓雾高速公路',
-  '薄雾城市街景',
-  '夜间雾霾',
-  '雨雾天气',
-  '检测车辆',
-  '寻找行人'
+  { zh: '清晰锐利', en: 'Clear, sharp photo without haze' },
+  { zh: '明亮干净', en: 'bright and clean' },
+  { zh: '无雾视野', en: 'Free from haze or fog' },
+  { zh: '高分辨率', en: 'High resolution and sharp details' },
+  { zh: '高对比度，清晰的细节', en: 'High contrast, clear details' },
+  { zh: '水晶般清晰', en: 'Crystal clear image' },
+  { zh: '色彩鲜艳', en: 'vivid colors' }
 ]
 
-const applyPrompt = (text) => {
-  store.textPrompt = text
+const applyPrompt = (item) => {
+  store.textPrompt = item.en
 }
 
 const onFileChange = (file) => {
@@ -225,10 +257,6 @@ const onFileChange = (file) => {
 const onStartProcess = () => {
   store.startProcessTask({ mode: currentMode, textPrompt: store.textPrompt })
 }
-
-onBeforeUnmount(() => {
-  store.stopPolling()
-})
 </script>
 
 <style scoped>
@@ -251,12 +279,18 @@ onBeforeUnmount(() => {
 .mt16 { margin-top: 16px; }
 .upload-area { width: 100%; }
 .mt12 { margin-top: 12px; }
+.mt-mini { margin-top: 8px; }
+.section-title { font-weight: 600; margin-bottom: 8px; font-size: var(--font-subtitle); }
+.info-item { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--el-text-color-regular); }
 
 .prompt-pool { display: flex; flex-direction: column; gap: 8px; }
 .pool-label { font-size: 12px; color: var(--el-text-color-secondary); }
 .tags-wrapper { display: flex; flex-wrap: wrap; gap: 8px; }
-.prompt-tag { cursor: pointer; transition: all 0.2s; }
+.prompt-tag { cursor: pointer; transition: all 0.2s; height: auto; padding: 4px 8px; }
 .prompt-tag:hover { color: var(--accent-color); border-color: var(--accent-color); background-color: rgba(114, 46, 209, 0.1); }
+.tag-content { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.tag-en { font-size: 12px; font-weight: 500; }
+.tag-zh { font-size: 10px; opacity: 0.8; }
 
 /* 视觉关联：指示条 */
 .indicator {
@@ -268,9 +302,7 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   vertical-align: middle;
 }
-.section-title {
-  font-weight: 600;
-  margin-bottom: 8px;
+.text-guidance-section .section-title {
   display: flex;
   align-items: center;
 }
@@ -312,6 +344,7 @@ onBeforeUnmount(() => {
 .control-card, .visual-card, .detect-card { box-shadow: var(--shadow); }
 .control-card:hover, .visual-card:hover, .detect-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
 .card-header { display:flex; align-items:center; justify-content:space-between; }
+.header-actions { display:flex; align-items:center; gap: 8px; }
 .status-btn { pointer-events: none; border-radius: 8px; }
 .img-box { border-radius: 10px; overflow: hidden; }
 /* el-image 内部 img 圆角 */
