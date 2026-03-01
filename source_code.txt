@@ -1,0 +1,3507 @@
+// File: frontend\src\main.js
+import { createApp } from 'vue'
+import App from './App.vue'
+import router from './router'
+import { createPinia } from 'pinia'
+const app = createApp(App)
+const pinia = createPinia()// 创建 Pinia 实例
+app.use(pinia) // 注册 Pinia 插件
+app.use(router)
+app.mount('#app')
+// File: frontend\src\App.vue
+<template>
+  <div id="app">
+    <Navigation @open-history="onOpenHistory" />
+    <router-view v-slot="{ Component }">
+      <component :is="Component" ref="viewRef" />
+    </router-view>
+  </div>
+</template>
+<script setup>
+import { ref } from 'vue'
+import Navigation from "./components/layout/Navigation.vue";
+const viewRef = ref(null)
+const onOpenHistory = () => {
+  // viewRef is the component instance
+  // When using <script setup>, methods are not exposed by default
+  // But we use defineExpose in BaseView/MultimodalView/ComparisonView
+  if (viewRef.value) {
+      // Direct access if exposed
+      if (typeof viewRef.value.openHistory === 'function') {
+          viewRef.value.openHistory()
+          return
+      }
+      // Access via internal instance if needed (sometimes helps in dev mode)
+      if (viewRef.value.$ && viewRef.value.$.exposed && viewRef.value.$.exposed.openHistory) {
+           viewRef.value.$.exposed.openHistory()
+      }
+  }
+}
+</script>
+<style>
+:root {
+  /* 主题色：科技蓝 */
+  --el-color-primary: #1E80FF;
+  /* 辅助色：成功/处理中/错误 */
+  --el-color-success: #16A34A; /* 绿色 */
+  --el-color-warning: #F59E0B; /* 橙色，处理中/警告 */
+  --el-color-danger: #EF4444;  /* 红色，错误 */
+  --el-color-info: #5B6C85;    /* 次级信息 */
+  /* 字体层级 */
+  --font-title: 18px;
+  --font-subtitle: 15px;
+  --font-body: 14px;
+}
+#app {
+  font-family: Avenir, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-align: center;
+  color: #2c3e50;
+  margin-top: 8px;
+}
+html, body { font-size: var(--font-body); }
+</style>
+// File: frontend\src\views\LoginView.vue
+<template>
+  <AuthSplitLayout>
+    <el-card class="auth-card" shadow="hover">
+      <template #header>
+        <div class="auth-title">用户登录</div>
+      </template>
+      <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
+        <el-form-item label="用户名" prop="username">
+          <el-input v-model="form.username" placeholder="请输入用户名" autocomplete="username" />
+        </el-form-item>
+        <el-form-item label="密码" prop="password">
+          <el-input v-model="form.password" type="password" placeholder="请输入密码" autocomplete="current-password" show-password />
+        </el-form-item>
+        <el-alert v-if="auth.errorMessage" :title="auth.errorMessage" type="error" :closable="false" show-icon class="mb12" />
+        <el-button type="primary" :loading="auth.loading" style="width: 100%" @click="onSubmit">登录</el-button>
+      </el-form>
+      <div class="auth-footer">
+        <el-text type="info">还没有账号？</el-text>
+        <el-link type="primary" @click="toRegister">去注册</el-link>
+      </div>
+    </el-card>
+  </AuthSplitLayout>
+</template>
+<script setup>
+import { reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import AuthSplitLayout from '@/components/auth/AuthSplitLayout.vue'
+const auth = useAuthStore()
+const router = useRouter()
+const route = useRoute()
+const formRef = ref()
+const form = reactive({
+  username: '',
+  password: ''
+})
+const rules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 3, max: 32, message: '用户名长度需在 3-32 之间', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, max: 128, message: '密码长度需在 6-128 之间', trigger: 'blur' }
+  ]
+}
+const onSubmit = async () => {
+  const ok = await formRef.value?.validate?.().catch(() => false)
+  if (!ok) return
+  const user = await auth.login(form.username.trim(), form.password)
+  if (!user) return
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/baseHome'
+  router.replace(redirect)
+}
+const toRegister = () => {
+  router.push({ path: '/register', query: { redirect: route.query.redirect } })
+}
+</script>
+<style scoped>
+.auth-card {
+  width: 420px;
+  max-width: 95vw;
+  text-align: left;
+}
+.auth-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+.auth-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.mb12 {
+  margin-bottom: 12px;
+}
+</style>
+// File: frontend\src\views\BaseView.vue
+<template>
+  <div class="base-view">
+    <el-container>
+      <!-- 左侧控制面板 -->
+      <el-aside width="320px" class="aside">
+        <el-card shadow="hover" class="control-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ panelTitle }}</span>
+              <div class="header-actions">
+                <el-button size="small" :type="controlStatus.type" class="status-btn" plain>{{ controlStatus.text }}</el-button>
+              </div>
+            </div>
+          </template>
+          <ImageUpload @change="onFileChange" />
+          <div class="param-item mt16">
+            <div class="label">去雾强度：{{ (store.dehazeStrength).toFixed(2) }}</div>
+            <el-slider v-model="store.dehazeStrength" :min="0" :max="1" :step="0.05" :marks="dehazeMarks" :format-tooltip="formatStrength" />
+          </div>
+          <!-- 模型信息说明 -->
+          <div class="model-info mt16">
+            <div class="section-title">算法配置</div>
+            <div class="info-item">
+              <span class="label">去雾算法：</span>
+              <el-tag size="small" effect="plain">暗通道先验 (DCP)</el-tag>
+            </div>
+            <div class="info-item mt-mini">
+              <span class="label">目标检测：</span>
+              <el-tag size="small" effect="plain">YOLOv11n</el-tag>
+            </div>
+          </div>
+          <div class="actions mt16">
+            <el-space direction="vertical" alignment="center" style="width: 100%">
+              <el-button type="primary" :icon="Upload" :disabled="!store.file || store.processing" :loading="store.processing" @click="onStartProcess">开始处理</el-button>
+              <el-button :icon="Refresh" :disabled="store.processing" @click="store.reset">重置</el-button>
+            </el-space>
+          </div>
+          <div class="status mt16" v-if="store.status !== 'idle'">
+            <el-tag v-if="store.status==='uploaded'" type="success">已上传</el-tag>
+            <el-tag v-else-if="store.status==='processing'" type="warning">处理中...</el-tag>
+            <el-tag v-else-if="store.status==='done'" type="success">处理完成</el-tag>
+            <el-alert v-else type="error" :closable="false" show-icon title="发生错误" :description="store.errorMessage || '处理失败'" />
+          </div>
+        </el-card>
+      </el-aside>
+      <!-- 中央可视化区域 -->
+      <el-main>
+        <el-row :gutter="12">
+          <!-- 左栏：输入图像 + 去雾结果 -->
+          <el-col :xs="24" :sm="24" :md="12">
+            <el-card shadow="hover" class="visual-card">
+              <template #header>
+                <div class="card-header">
+                  <span>输入图像</span>
+                  <el-button size="small" :type="inputHeaderStatus.type" class="status-btn" plain>{{ inputHeaderStatus.text }}</el-button>
+                </div>
+              </template>
+              <div v-if="store.inputPreviewUrl">
+                <el-image :src="store.inputPreviewUrl" :preview-src-list="[store.inputPreviewUrl]" lazy fit="contain" class="img-box" />
+              </div>
+              <el-empty v-else description="等待上传..." class="empty-box" />
+            </el-card>
+            <el-card shadow="hover" class="visual-card mt16">
+              <template #header>
+                <div class="card-header">
+                  <span>去雾结果</span>
+                  <el-button size="small" :type="dehazeHeaderStatus.type" class="status-btn" plain>{{ dehazeHeaderStatus.text }}</el-button>
+                </div>
+              </template>
+              <template v-if="store.status==='processing'">
+                <el-skeleton :rows="6" animated />
+              </template>
+              <template v-else>
+                <div v-if="store.dehazeImageUrl">
+                  <el-image :src="store.dehazeImageUrl" :preview-src-list="[store.dehazeImageUrl]" lazy fit="contain" class="img-box" />
+                </div>
+                <el-empty v-else description="暂无结果" class="empty-box" />
+              </template>
+            </el-card>
+          </el-col>
+          <!-- 右栏：检测结果 -->
+          <el-col :xs="24" :sm="24" :md="12">
+            <el-card shadow="hover" class="detect-card">
+              <template #header>
+                <div class="card-header">
+                  <span>目标检测结果</span>
+                  <el-button size="small" :type="detectHeaderStatus.type" class="status-btn" plain>{{ detectHeaderStatus.text }}</el-button>
+                </div>
+              </template>
+              <div class="detect-content">
+                <template v-if="store.status==='processing'">
+                  <el-skeleton :rows="8" animated />
+                </template>
+                <template v-else>
+                  <div v-if="store.detectImageUrl">
+                    <el-image :src="store.detectImageUrl" :preview-src-list="[store.detectImageUrl]" lazy fit="contain" class="detect-img" />
+                  </div>
+                  <el-empty v-else description="暂无结果" class="empty-box detect-empty" />
+                </template>
+                <div class="detect-scroll-wrapper scroll-container">
+                  <el-divider>检测类别统计</el-divider>
+                  <div v-if="store.detectionSummary.length" class="detect-list">
+                    <el-table :data="store.detectionSummary" size="small" style="width:100%" max-height="150">
+                      <el-table-column prop="label" label="类别" width="160" />
+                      <el-table-column prop="count" label="数量" />
+                    </el-table>
+                  </div>
+                  <div v-else class="detect-list">
+                    <el-text type="info">暂无统计数据</el-text>
+                  </div>
+                  <el-divider>检测结果列表</el-divider>
+                  <div v-if="store.detections.length" class="detect-list">
+                    <el-table :data="store.detections" size="small" style="width:100%" max-height="150">
+                      <el-table-column prop="label" label="类别" width="160" />
+                      <el-table-column prop="confidence" label="置信度" />
+                    </el-table>
+                  </div>
+                  <div v-else class="detect-list">
+                    <el-text type="info">暂无检测到的目标</el-text>
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-main>
+    </el-container>
+    <HistoryPanel 
+      ref="historyPanelRef" 
+      mode="basic" 
+      @select="onHistorySelect" 
+    />
+  </div>
+</template>
+<script setup>
+import { onBeforeUnmount, computed, ref } from 'vue'
+import { Upload, Refresh, Clock } from '@element-plus/icons-vue'
+import { useTaskStore } from '@/stores/task'
+import ImageUpload from '@/components/common/ImageUpload.vue'
+import HistoryPanel from '@/components/common/HistoryPanel.vue'
+const store = useTaskStore()
+const historyPanelRef = ref(null)
+const openHistory = () => {
+  historyPanelRef.value?.open()
+}
+const onHistorySelect = (item) => {
+  store.loadHistory(item)
+}
+defineExpose({ openHistory })
+// 当前模式：基础模式；后续可根据路由或全局状态注入
+const currentMode = 'basic'
+const panelTitle = computed(() => {
+  const map = {
+    basic: '基础控制面板',
+    multimodal: '多模态控制面板',
+    compare: '对比控制面板'
+  }
+  return map[currentMode] || '控制面板'
+})
+// 标题右侧状态按钮文案与样式
+const controlStatus = computed(() => {
+  const s = store.status
+  if (s === 'uploaded') return { text: '已上传', type: 'success' }
+  if (s === 'processing') return { text: '处理中...', type: 'warning' }
+  if (s === 'done') return { text: '处理完成', type: 'success' }
+  if (s === 'error') return { text: '发生错误', type: 'danger' }
+  return { text: '等待处理...', type: 'info' }
+})
+const inputHeaderStatus = computed(() => (store.file
+  ? { text: '已上传', type: 'success' }
+  : { text: '未上传', type: 'info' }
+))
+const dehazeHeaderStatus = computed(() => {
+  if (store.status === 'processing') return { text: '处理中...', type: 'warning' }
+  if (store.dehazeImageUrl) return { text: '已生成', type: 'success' }
+  return { text: '暂无结果', type: 'info' }
+})
+const detectHeaderStatus = computed(() => {
+  if (store.status === 'processing') return { text: '处理中...', type: 'warning' }
+  if (store.detectImageUrl) return { text: '已生成', type: 'success' }
+  return { text: '暂无结果', type: 'info' }
+})
+const dehazeMarks = { 0: '0', 0.5: '0.5', 1: '1' }
+const formatStrength = (v) => Number(v).toFixed(2)
+const onFileChange = (file) => {
+  const raw = file?.raw || null
+  if (raw) {
+    store.setFile(raw)
+    // 可选择立即上传到后端
+    store.upload().catch(() => {})
+  }
+}
+const onStartProcess = () => {
+  store.startProcessTask({ mode: currentMode })
+}
+</script>
+<style scoped>
+.base-view {
+  padding: 12px;
+  --panel-gap: 16px;
+  --card-h: 320px;
+  --empty-size: 120px;
+  --radius: 12px;
+  --shadow: 0 4px 16px rgba(0,0,0,0.08);
+  --shadow-hover: 0 10px 24px rgba(0,0,0,0.12);
+}
+.aside {
+  padding-right: 12px;
+  position: sticky;
+  top: 12px;
+  align-self: flex-start;
+}
+.mt16 { margin-top: 16px; }
+.mt-mini { margin-top: 8px; }
+.upload-area { width: 100%; }
+.mt12 { margin-top: 12px; }
+.section-title { font-weight: 600; margin-bottom: 8px; font-size: var(--font-subtitle); }
+.info-item { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--el-text-color-regular); }
+/* 高度协调与图片容器设置 */
+.control-card { height: calc(var(--card-h) * 2 + var(--panel-gap)); display:flex; flex-direction:column; }
+.visual-card { height: var(--card-h); display:flex; flex-direction:column; }
+.img-box { width: 100%; height: 100%; }
+.detect-card { height: calc(var(--card-h) * 2 + var(--panel-gap)); display:flex; flex-direction:column; }
+.detect-content { display:flex; flex-direction:column; flex:1; overflow: hidden; }
+.detect-scroll-wrapper { flex: 1; overflow-y: auto; padding-right: 4px; }
+.detect-img { flex: 0 0 auto; height: 180px; width: 100%; display: block; }
+.detect-empty { flex: 0 0 auto; height: 180px; }
+.detect-list { max-height: none; overflow: visible; }
+.empty-box { height: 100%; display:flex; align-items:center; justify-content:center; }
+.empty-box :deep(.el-empty__image) { width: var(--empty-size) !important; }
+.empty-box :deep(.el-empty__description) { font-size: var(--font-body); }
+/* 统一圆角与悬浮阴影美化 */
+:deep(.el-card) { border-radius: var(--radius); overflow: hidden; transition: box-shadow .25s ease, transform .2s ease; }
+.control-card, .visual-card, .detect-card { box-shadow: var(--shadow); }
+.control-card:hover, .visual-card:hover, .detect-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+.card-header { display:flex; align-items:center; justify-content:space-between; }
+.header-actions { display:flex; align-items:center; gap: 8px; }
+.status-btn { pointer-events: none; border-radius: 8px; }
+.img-box { border-radius: 10px; overflow: hidden; }
+/* el-image 内部 img 圆角 */
+.img-box :deep(.el-image__inner) { border-radius: 10px; }
+.card-header span { font-weight: 600; font-size: var(--font-title); }
+.param-item .label { font-weight: 500; font-size: var(--font-subtitle); color: var(--el-color-info); }
+.detect-list { font-size: var(--font-body); }
+/* 自定义滚动条样式 */
+.scroll-container :deep(.el-table__body-wrapper::-webkit-scrollbar) {
+  width: 6px;
+  height: 6px;
+}
+.scroll-container :deep(.el-table__body-wrapper::-webkit-scrollbar-thumb) {
+  background-color: #dcdfe6;
+  border-radius: 3px;
+}
+.scroll-container :deep(.el-table__body-wrapper::-webkit-scrollbar-track) {
+  background-color: #f5f7fa;
+}
+.scroll-container :deep(.el-table__body-wrapper:hover::-webkit-scrollbar-thumb) {
+  background-color: #c0c4cc;
+}
+@media (max-width: 768px) {
+  .base-view { --card-h: 220px; --empty-size: 90px; }
+  .base-view .el-container { flex-direction: column; }
+  .base-view .el-container .el-aside { width: 100% !important; margin-bottom: 12px; }
+  .aside { padding-right: 0; position: static; }
+}
+</style>
+// File: frontend\src\views\MultimodalView.vue
+<template>
+  <div class="multimodal-view">
+    <el-container>
+      <!-- 左侧控制面板 -->
+      <el-aside width="320px" class="aside">
+        <el-card shadow="hover" class="control-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ panelTitle }}</span>
+              <div class="header-actions">
+                <el-button size="small" :type="controlStatus.type" class="status-btn" plain>{{ controlStatus.text }}</el-button>
+              </div>
+            </div>
+          </template>
+          <ImageUpload @change="onFileChange" />
+          <!-- 文本引导区域 -->
+          <div class="text-guidance-section mt16">
+            <div class="section-title">
+              <span class="indicator"></span>
+              文本引导
+            </div>
+            <el-input
+              v-model="store.textPrompt"
+              type="textarea"
+              :rows="2"
+              placeholder="请使用英文描述你期望得到的图像"
+              class="guidance-input"
+            />
+            <div class="prompt-pool mt12">
+              <span class="pool-label">常用场景：</span>
+              <div class="tags-wrapper">
+                <el-tag
+                  v-for="item in promptPool"
+                  :key="item.en"
+                  class="prompt-tag"
+                  type="info"
+                  effect="light"
+                  @click="applyPrompt(item)"
+                >
+                  <div class="tag-content">
+                    <div class="tag-en">{{ item.en }}</div>
+                    <div class="tag-zh">{{ item.zh }}</div>
+                  </div>
+                </el-tag>
+              </div>
+            </div>
+            <div class="guidance-hint">
+              提示：输入特定关键词可增强检测效果
+            </div>
+          </div>
+          <!-- 模型信息说明 -->
+          <div class="model-info mt16">
+            <div class="section-title">算法配置</div>
+            <div class="info-item">
+              <span class="label">去雾算法：</span>
+              <el-tag size="small" effect="plain" type="success">CoA (CLIP-Oriented)</el-tag>
+            </div>
+            <div class="info-item mt-mini">
+              <span class="label">目标检测：</span>
+              <el-tag size="small" effect="plain" type="warning">Feature Fusion YOLO</el-tag>
+            </div>
+          </div>
+          <div class="actions mt16">
+            <el-space :size="8">
+              <el-button type="primary" :icon="Upload" :disabled="!store.file || store.processing" :loading="store.processing" @click="onStartProcess">开始处理</el-button>
+              <el-button :icon="Refresh" :disabled="store.processing" @click="store.reset">重置</el-button>
+            </el-space>
+          </div>
+          <div class="status mt16" v-if="store.status !== 'idle'">
+            <el-tag v-if="store.status==='uploaded'" type="success">已上传</el-tag>
+            <el-tag v-else-if="store.status==='processing'" type="warning">处理中...</el-tag>
+            <el-tag v-else-if="store.status==='done'" type="success">处理完成</el-tag>
+            <el-alert v-else type="error" :closable="false" show-icon title="发生错误" :description="store.errorMessage || '处理失败'" />
+          </div>
+        </el-card>
+      </el-aside>
+      <!-- 中央可视化区域 -->
+      <el-main>
+        <el-row :gutter="12">
+          <!-- 左栏：输入图像 + 基于文本的检测结果 -->
+          <el-col :xs="24" :sm="24" :md="12">
+            <el-card shadow="hover" class="visual-card">
+              <template #header>
+                <div class="card-header">
+                  <span>输入图像</span>
+                  <el-button size="small" :type="inputHeaderStatus.type" class="status-btn" plain>{{ inputHeaderStatus.text }}</el-button>
+                </div>
+              </template>
+              <div v-if="store.inputPreviewUrl">
+                <el-image :src="store.inputPreviewUrl" :preview-src-list="[store.inputPreviewUrl]" lazy fit="contain" class="img-box" />
+              </div>
+              <el-empty v-else description="等待上传..." class="empty-box" />
+            </el-card>
+            <!-- 标题变化：去雾结果 -> 基于文本引导的检测结果 -->
+            <el-card shadow="hover" class="visual-card mt16 linked-result-card">
+              <template #header>
+                <div class="card-header">
+                  <div class="linked-title">
+                    <span class="indicator"></span>
+                    <span>基于文本引导的去雾结果</span>
+                  </div>
+                  <el-button size="small" :type="dehazeHeaderStatus.type" class="status-btn" plain>{{ dehazeHeaderStatus.text }}</el-button>
+                </div>
+              </template>
+              <template v-if="store.status==='processing'">
+                <el-skeleton :rows="6" animated />
+              </template>
+              <template v-else>
+                <div v-if="store.dehazeImageUrl">
+                  <el-image :src="store.dehazeImageUrl" :preview-src-list="[store.dehazeImageUrl]" lazy fit="contain" class="img-box" />
+                </div>
+                <el-empty v-else description="暂无结果" class="empty-box" />
+              </template>
+            </el-card>
+          </el-col>
+          <!-- 右栏：检测结果 -->
+          <el-col :xs="24" :sm="24" :md="12">
+            <el-card shadow="hover" class="detect-card">
+              <template #header>
+                <div class="card-header">
+                  <span>目标检测结果</span>
+                  <el-button size="small" :type="detectHeaderStatus.type" class="status-btn" plain>{{ detectHeaderStatus.text }}</el-button>
+                </div>
+              </template>
+              <div class="detect-content">
+                <template v-if="store.status==='processing'">
+                  <el-skeleton :rows="8" animated />
+                </template>
+                <template v-else>
+                  <div v-if="store.detectImageUrl">
+                    <el-image :src="store.detectImageUrl" :preview-src-list="[store.detectImageUrl]" lazy fit="contain" class="detect-img" />
+                  </div>
+                  <el-empty v-else description="暂无结果" class="empty-box detect-empty" />
+                </template>
+                <div class="detect-scroll-wrapper scroll-container">
+                  <el-divider>检测类别统计</el-divider>
+                  <div v-if="store.detectionSummary.length" class="detect-list">
+                    <el-table :data="store.detectionSummary" size="small" style="width:100%" max-height="150">
+                      <el-table-column prop="label" label="类别" width="160" />
+                      <el-table-column prop="count" label="数量" />
+                    </el-table>
+                  </div>
+                  <div v-else class="detect-list">
+                    <el-text type="info">暂无统计数据</el-text>
+                  </div>
+                  <el-divider>检测结果列表</el-divider>
+                  <div v-if="store.detections.length" class="detect-list">
+                    <el-table :data="store.detections" size="small" style="width:100%" max-height="150">
+                      <el-table-column prop="label" label="类别" width="160" />
+                      <el-table-column prop="confidence" label="置信度" />
+                    </el-table>
+                  </div>
+                  <div v-else class="detect-list">
+                    <el-text type="info">暂无检测到的目标</el-text>
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-main>
+    </el-container>
+    <HistoryPanel 
+      ref="historyPanelRef" 
+      mode="multimodal" 
+      @select="onHistorySelect" 
+    />
+  </div>
+</template>
+<script setup>
+import { onBeforeUnmount, computed, ref } from 'vue'
+import { Upload, Refresh, Clock } from '@element-plus/icons-vue'
+import { useTaskStore } from '@/stores/task'
+import ImageUpload from '@/components/common/ImageUpload.vue'
+import HistoryPanel from '@/components/common/HistoryPanel.vue'
+const store = useTaskStore()
+const historyPanelRef = ref(null)
+const openHistory = () => {
+  historyPanelRef.value?.open()
+}
+const onHistorySelect = (item) => {
+  store.loadHistory(item)
+  if (item.params && item.params.text_prompt) {
+      store.textPrompt = item.params.text_prompt
+  }
+}
+defineExpose({ openHistory })
+// 当前模式：多模态模式
+const currentMode = 'fusion'
+const panelTitle = '多模态控制面板'
+// 标题右侧状态按钮文案与样式
+const controlStatus = computed(() => {
+  const s = store.status
+  if (s === 'uploaded') return { text: '已上传', type: 'success' }
+  if (s === 'processing') return { text: '处理中...', type: 'warning' }
+  if (s === 'done') return { text: '处理完成', type: 'success' }
+  if (s === 'error') return { text: '发生错误', type: 'danger' }
+  return { text: '等待处理...', type: 'info' }
+})
+const inputHeaderStatus = computed(() => (store.file
+  ? { text: '已上传', type: 'success' }
+  : { text: '未上传', type: 'info' }
+))
+const dehazeHeaderStatus = computed(() => {
+  if (store.status === 'processing') return { text: '处理中...', type: 'warning' }
+  if (store.dehazeImageUrl) return { text: '已生成', type: 'success' }
+  return { text: '暂无结果', type: 'info' }
+})
+const detectHeaderStatus = computed(() => {
+  if (store.status === 'processing') return { text: '处理中...', type: 'warning' }
+  if (store.detectImageUrl) return { text: '已生成', type: 'success' }
+  return { text: '暂无结果', type: 'info' }
+})
+const promptPool = [
+  { zh: '清晰锐利', en: 'Clear, sharp photo without haze' },
+  { zh: '明亮干净', en: 'bright and clean' },
+  { zh: '无雾视野', en: 'Free from haze or fog' },
+  { zh: '高分辨率', en: 'High resolution and sharp details' },
+  { zh: '高对比度，清晰的细节', en: 'High contrast, clear details' },
+  { zh: '水晶般清晰', en: 'Crystal clear image' },
+  { zh: '色彩鲜艳', en: 'vivid colors' }
+]
+const applyPrompt = (item) => {
+  store.textPrompt = item.en
+}
+const onFileChange = (file) => {
+  const raw = file?.raw || null
+  if (raw) {
+    store.setFile(raw)
+    // 可选择立即上传到后端
+    store.upload().catch(() => {})
+  }
+}
+const onStartProcess = () => {
+  store.startProcessTask({ mode: currentMode, textPrompt: store.textPrompt })
+}
+</script>
+<style scoped>
+.multimodal-view {
+  padding: 12px;
+  --panel-gap: 16px;
+  --card-h: 320px;
+  --empty-size: 120px;
+  --radius: 12px;
+  --shadow: 0 4px 16px rgba(0,0,0,0.08);
+  --shadow-hover: 0 10px 24px rgba(0,0,0,0.12);
+  --accent-color: #722ed1; /* 紫色系代表多模态融合 */
+}
+.aside {
+  padding-right: 12px;
+  position: sticky;
+  top: 12px;
+  align-self: flex-start;
+}
+.mt16 { margin-top: 16px; }
+.upload-area { width: 100%; }
+.mt12 { margin-top: 12px; }
+.mt-mini { margin-top: 8px; }
+.section-title { font-weight: 600; margin-bottom: 8px; font-size: var(--font-subtitle); }
+.info-item { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--el-text-color-regular); }
+.prompt-pool { display: flex; flex-direction: column; gap: 8px; }
+.pool-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.tags-wrapper { display: flex; flex-wrap: wrap; gap: 8px; }
+.prompt-tag { cursor: pointer; transition: all 0.2s; height: auto; padding: 4px 8px; }
+.prompt-tag:hover { color: var(--accent-color); border-color: var(--accent-color); background-color: rgba(114, 46, 209, 0.1); }
+.tag-content { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.tag-en { font-size: 12px; font-weight: 500; }
+.tag-zh { font-size: 10px; opacity: 0.8; }
+/* 视觉关联：指示条 */
+.indicator {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background-color: var(--accent-color);
+  margin-right: 8px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.text-guidance-section .section-title {
+  display: flex;
+  align-items: center;
+}
+.linked-title {
+  display: flex;
+  align-items: center;
+}
+.guidance-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+/* 输入框聚焦时的样式关联 */
+.guidance-input :deep(.el-textarea__inner:focus) {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color) inset;
+}
+/* 关联的结果卡片标题颜色 */
+/* .linked-result-card .card-header span {
+  color: var(--accent-color);
+} */
+/* 高度协调与图片容器设置 */
+.control-card { min-height: calc(var(--card-h) * 2 + var(--panel-gap)); display:flex; flex-direction:column; }
+.visual-card { height: var(--card-h); display:flex; flex-direction:column; }
+.img-box { width: 100%; height: 100%; }
+.detect-card { height: calc(var(--card-h) * 2 + var(--panel-gap)); display:flex; flex-direction:column; }
+.detect-content { display:flex; flex-direction:column; flex:1; overflow: hidden; }
+.detect-scroll-wrapper { flex: 1; overflow-y: auto; padding-right: 4px; }
+.detect-img { flex: 0 0 auto; height: 180px; width: 100%; display: block; }
+.detect-empty { flex: 0 0 auto; height: 180px; }
+.detect-list { max-height: none; overflow: visible; }
+.empty-box { height: 100%; display:flex; align-items:center; justify-content:center; }
+.empty-box :deep(.el-empty__image) { width: var(--empty-size) !important; }
+.empty-box :deep(.el-empty__description) { font-size: var(--font-body); }
+/* 统一圆角与悬浮阴影美化 */
+:deep(.el-card) { border-radius: var(--radius); overflow: hidden; transition: box-shadow .25s ease, transform .2s ease; }
+.control-card, .visual-card, .detect-card { box-shadow: var(--shadow); }
+.control-card:hover, .visual-card:hover, .detect-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+.card-header { display:flex; align-items:center; justify-content:space-between; }
+.header-actions { display:flex; align-items:center; gap: 8px; }
+.status-btn { pointer-events: none; border-radius: 8px; }
+.img-box { border-radius: 10px; overflow: hidden; }
+/* el-image 内部 img 圆角 */
+.img-box :deep(.el-image__inner) { border-radius: 10px; }
+.card-header span { font-weight: 600; font-size: var(--font-title); }
+.param-item .label { font-weight: 500; font-size: var(--font-subtitle); color: var(--el-color-info); }
+.detect-list { font-size: var(--font-body); }
+/* 自定义滚动条样式 */
+.scroll-container :deep(.el-table__body-wrapper::-webkit-scrollbar) {
+  width: 6px;
+  height: 6px;
+}
+.scroll-container :deep(.el-table__body-wrapper::-webkit-scrollbar-thumb) {
+  background-color: #dcdfe6;
+  border-radius: 3px;
+}
+.scroll-container :deep(.el-table__body-wrapper::-webkit-scrollbar-track) {
+  background-color: #f5f7fa;
+}
+.scroll-container :deep(.el-table__body-wrapper:hover::-webkit-scrollbar-thumb) {
+  background-color: #c0c4cc;
+}
+@media (max-width: 768px) {
+  .multimodal-view { --card-h: 220px; --empty-size: 90px; }
+  .multimodal-view .el-container { flex-direction: column; }
+  .multimodal-view .el-container .el-aside { width: 100% !important; margin-bottom: 12px; }
+  .aside { padding-right: 0; position: static; }
+}
+</style>
+// File: frontend\src\views\ComparisonView.vue
+<template>
+  <div class="comparison-view">
+    <el-container>
+      <!-- 左侧控制面板 -->
+      <el-aside width="320px" class="aside">
+        <el-card shadow="hover" class="control-card">
+          <template #header>
+            <div class="card-header">
+              <span>对比模式控制面板</span>
+            </div>
+          </template>
+          <div class="section-title mt16">
+            <span class="indicator"></span>
+            1. 图像上传
+          </div>
+          <ImageUpload @change="onFileChange" />
+          <div class="section-title mt16">
+            <span class="indicator"></span>
+            2. 文本引导
+          </div>
+          <el-input
+            v-model="textPrompt"
+            type="textarea"
+            :rows="2"
+            placeholder="请使用英文描述你期望得到的图像"
+            class="guidance-input"
+          />
+          <div class="prompt-pool mt12">
+            <span class="pool-label">常用场景：</span>
+            <div class="tags-wrapper">
+              <el-tag
+                v-for="item in promptPool"
+                :key="item.en"
+                class="prompt-tag"
+                type="info"
+                effect="light"
+                @click="applyPrompt(item)"
+              >
+                <div class="tag-content">
+                  <div class="tag-en">{{ item.en }}</div>
+                  <div class="tag-zh">{{ item.zh }}</div>
+                </div>
+              </el-tag>
+            </div>
+          </div>
+          <div class="guidance-hint">
+            提示：仅针对方案二（多模态引导）生效
+          </div>
+          <div class="actions mt16">
+            <el-button 
+              type="primary" 
+              class="w-100" 
+              :loading="processing" 
+              :disabled="!store.file"
+              @click="handleCompare"
+            >
+              开始对比分析
+            </el-button>
+          </div>
+        </el-card>
+      </el-aside>
+      <!-- 中央可视化区域 -->
+      <el-main class="main-area">
+        <div class="comparison-container">
+          <!-- Scheme 0: Baseline -->
+          <el-card shadow="hover" class="scheme-card mb-4">
+            <template #header>
+              <div class="scheme-header">
+                <span class="badge baseline">基准对比 (Baseline)</span>
+                <span class="title">原始有雾图直接检测 (Foggy -> Detect)</span>
+              </div>
+            </template>
+            <div class="pipeline-row">
+              <div class="image-box-wrapper">
+                <span class="img-label">有雾原图</span>
+                <div class="image-box">
+                  <el-image :src="store.inputPreviewUrl" fit="contain" class="pipeline-img">
+                    <template #error><div class="placeholder">等待上传</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="image-box-wrapper">
+                <span class="img-label">直接检测结果</span>
+                <div class="image-box">
+                  <el-image :src="baselineResult.detected" fit="contain" class="pipeline-img" :preview-src-list="[baselineResult.detected]">
+                    <template #error><div class="placeholder">待处理</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <!-- Key Indicators -->
+              <div class="metrics-panel">
+                <div class="metric-item">
+                  <span class="label">目标总数</span>
+                  <span class="value">{{ baselineResult.count || 0 }}</span>
+                </div>
+                <div class="metric-item">
+                  <span class="label">平均置信度</span>
+                  <span class="value">{{ baselineResult.avgConf || '0%' }}</span>
+                </div>
+              </div>
+              <div class="status-hint">作为基准参照</div>
+            </div>
+          </el-card>
+          <!-- Scheme 1: Basic -->
+          <el-card shadow="hover" class="scheme-card mb-4">
+            <template #header>
+              <div class="scheme-header">
+                <span class="badge basic">方案一</span>
+                <span class="title">基础去雾检测 (Original -> Dehaze -> Detect)</span>
+              </div>
+            </template>
+            <div class="pipeline-row">
+              <div class="image-box-wrapper">
+                <span class="img-label">原图</span>
+                <div class="image-box">
+                  <el-image :src="store.inputPreviewUrl" fit="contain" class="pipeline-img">
+                    <template #error><div class="placeholder">等待上传</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="image-box-wrapper">
+                <span class="img-label">去雾结果</span>
+                <div class="image-box">
+                  <el-image :src="basicResult.dehazed" fit="contain" class="pipeline-img" :preview-src-list="[basicResult.dehazed]">
+                    <template #error><div class="placeholder">待处理</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="image-box-wrapper">
+                <span class="img-label">检测结果</span>
+                <div class="image-box">
+                  <el-image :src="basicResult.detected" fit="contain" class="pipeline-img" :preview-src-list="[basicResult.detected]">
+                    <template #error><div class="placeholder">待处理</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <!-- Key Indicators -->
+              <div class="metrics-panel">
+                <div class="metric-item">
+                  <span class="label">目标总数</span>
+                  <span class="value">{{ basicResult.count || 0 }}</span>
+                </div>
+                <div class="metric-item">
+                  <span class="label">平均置信度</span>
+                  <span class="value">{{ basicResult.avgConf || '0%' }}</span>
+                </div>
+              </div>
+            </div>
+          </el-card>
+          <!-- Scheme 2: Multimodal -->
+          <el-card shadow="hover" class="scheme-card mb-4">
+            <template #header>
+              <div class="scheme-header">
+                <span class="badge multimodal">方案二</span>
+                <span class="title">多模态引导检测 (Original -> Text -> Dehaze -> Detect)</span>
+              </div>
+            </template>
+            <div class="pipeline-row">
+              <div class="image-box-wrapper">
+                <span class="img-label">原图</span>
+                <div class="image-box">
+                  <el-image :src="store.inputPreviewUrl" fit="contain" class="pipeline-img">
+                     <template #error><div class="placeholder">等待上传</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <div class="arrow with-text">
+                <span>+ 文本引导</span>
+                <div class="text-hint" v-if="textPrompt">"{{ textPrompt }}"</div>
+                <div class="arrow-icon">→</div>
+              </div>
+              <div class="image-box-wrapper">
+                <span class="img-label">引导去雾</span>
+                <div class="image-box">
+                  <el-image :src="multimodalResult.dehazed" fit="contain" class="pipeline-img" :preview-src-list="[multimodalResult.dehazed]">
+                    <template #error><div class="placeholder">待处理</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="image-box-wrapper">
+                <span class="img-label">联合检测</span>
+                <div class="image-box">
+                  <el-image :src="multimodalResult.detected" fit="contain" class="pipeline-img" :preview-src-list="[multimodalResult.detected]">
+                    <template #error><div class="placeholder">待处理</div></template>
+                  </el-image>
+                </div>
+              </div>
+              <!-- Key Indicators -->
+              <div class="metrics-panel">
+                <div class="metric-item">
+                  <span class="label">目标总数</span>
+                  <span class="value highlight">{{ multimodalResult.count || 0 }}</span>
+                </div>
+                <div class="metric-item">
+                  <span class="label">平均置信度</span>
+                  <span class="value highlight">{{ multimodalResult.avgConf || '0%' }}</span>
+                </div>
+              </div>
+            </div>
+          </el-card>
+          <!-- Quantitative Comparison Card -->
+          <el-card shadow="hover" class="scheme-card mb-4">
+            <template #header>
+              <div class="scheme-header">
+                <span class="badge comparison">对比总结</span>
+                <span class="title">量化指标对比</span>
+              </div>
+            </template>
+            <el-table :data="comparisonData" border style="width: 100%">
+              <el-table-column prop="metric" label="指标" width="150" />
+              <el-table-column label="基准 (Baseline)" align="center">
+                <template #default="scope">
+                  <span class="baseline-val">{{ scope.row.baseline }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="方案一 (基础去雾)" align="center">
+                <template #default="scope">
+                  <span :class="{ 'winner': scope.row.metric !== '推理耗时 (ms)' && scope.row.basic > scope.row.baseline && scope.row.basic >= scope.row.multimodal }">{{ scope.row.basic }}</span>
+                  <div class="imp-sub" v-if="scope.row.basicImp != 0">
+                    {{ scope.row.basicImp > 0 ? '+' : '' }}{{ scope.row.basicImp }}%
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="方案二 (多模态引导)" align="center">
+                <template #default="scope">
+                  <span :class="{ 'winner': scope.row.metric !== '推理耗时 (ms)' && scope.row.multimodal > scope.row.basic && scope.row.multimodal > scope.row.baseline }" class="highlight-val">{{ scope.row.multimodal }}</span>
+                  <div class="imp-sub highlight" v-if="scope.row.multiImp != 0">
+                    {{ scope.row.multiImp > 0 ? '+' : '' }}{{ scope.row.multiImp }}%
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="最终提升 (vs Baseline)" align="center" width="160">
+                <template #default="scope">
+                  <el-tag :type="scope.row.metric === '推理耗时 (ms)' ? (scope.row.multiImp > 0 ? 'danger' : 'success') : (scope.row.multiImp > 0 ? 'success' : 'info')" effect="dark">
+                    {{ scope.row.multiImp > 0 ? '↑ ' : '↓ ' }}{{ Math.abs(scope.row.multiImp) }}%
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <!-- Export Button Area -->
+          <div class="export-section">
+             <el-button type="primary" size="large" class="export-btn" @click="exportReport">
+              <el-icon><Document /></el-icon>
+              生成对比报告 (PDF)
+            </el-button>
+          </div>
+        </div>
+      </el-main>
+    </el-container>
+    <HistoryPanel 
+      ref="historyPanelRef" 
+      mode="comparison" 
+      @select="onHistorySelect" 
+    />
+  </div>
+</template>
+<script setup>
+import { ref, reactive, computed } from 'vue'
+import { useTaskStore } from '@/stores/task'
+import ImageUpload from '@/components/common/ImageUpload.vue'
+import HistoryPanel from '@/components/common/HistoryPanel.vue'
+import { Document, Clock } from '@element-plus/icons-vue'
+import api, { uploadImage, getDetections } from '@/utils/api'
+import { ElMessage } from 'element-plus'
+const store = useTaskStore()
+const textPrompt = ref('')
+const processing = ref(false)
+const comparisonDone = ref(false)
+const historyPanelRef = ref(null)
+const openHistory = () => {
+  historyPanelRef.value?.open()
+}
+defineExpose({ openHistory })
+const promptPool = [
+  { zh: '清晰锐利', en: 'Clear, sharp photo without haze' },
+  { zh: '明亮干净', en: 'bright and clean' },
+  { zh: '无雾视野', en: 'Free from haze or fog' },
+  { zh: '高分辨率', en: 'High resolution and sharp details' },
+  { zh: '高对比度，清晰的细节', en: 'High contrast, clear details' },
+  { zh: '水晶般清晰', en: 'Crystal clear image' },
+  { zh: '色彩鲜艳', en: 'vivid colors' }
+]
+const applyPrompt = (item) => {
+  textPrompt.value = item.en
+}
+const baselineResult = reactive({
+  dehazed: '',
+  detected: '',
+  count: 0,
+  avgConf: '0%',
+  latency: 0
+})
+const basicResult = reactive({
+  dehazed: '',
+  detected: '',
+  count: 0,
+  avgConf: '0%',
+  latency: 0
+})
+const multimodalResult = reactive({
+  dehazed: '',
+  detected: '',
+  count: 0,
+  avgConf: '0%',
+  latency: 0
+})
+const comparisonData = computed(() => {
+  const baseCount = baselineResult.count
+  const basicCount = basicResult.count
+  const multiCount = multimodalResult.count
+  const baseConf = parseFloat(baselineResult.avgConf) || 0
+  const basicConf = parseFloat(basicResult.avgConf) || 0
+  const multiConf = parseFloat(multimodalResult.avgConf) || 0
+  const calcImp = (val, base) => base === 0 ? (val > 0 ? 100 : 0) : ((val - base) / base * 100).toFixed(1)
+  return [
+    { 
+      metric: '目标检测数量', 
+      baseline: baseCount,
+      basic: basicCount, 
+      multimodal: multiCount, 
+      basicImp: calcImp(basicCount, baseCount),
+      multiImp: calcImp(multiCount, baseCount) 
+    },
+    { 
+      metric: '平均置信度 (%)', 
+      baseline: baseConf,
+      basic: basicConf, 
+      multimodal: multiConf, 
+      basicImp: calcImp(basicConf, baseConf),
+      multiImp: calcImp(multiConf, baseConf) 
+    },
+    {
+      metric: '推理耗时 (ms)',
+      baseline: baselineResult.latency.toFixed(1),
+      basic: basicResult.latency.toFixed(1),
+      multimodal: multimodalResult.latency.toFixed(1),
+      basicImp: ((basicResult.latency - baselineResult.latency) / baselineResult.latency * 100).toFixed(1),
+      multiImp: ((multimodalResult.latency - baselineResult.latency) / baselineResult.latency * 100).toFixed(1)
+    }
+  ]
+})
+const onFileChange = (file) => {
+  if (file?.raw) {
+    store.setFile(file.raw)
+    // Reset results
+    resetResults()
+  }
+}
+const resetResults = () => {
+  comparisonDone.value = false
+  Object.assign(baselineResult, { dehazed: '', detected: '', count: 0, avgConf: '0%', latency: 0 })
+  Object.assign(basicResult, { dehazed: '', detected: '', count: 0, avgConf: '0%', latency: 0 })
+  Object.assign(multimodalResult, { dehazed: '', detected: '', count: 0, avgConf: '0%', latency: 0 })
+}
+const parseDetections = async (timestamp, basename) => {
+  try {
+    const resp = await getDetections(timestamp, basename)
+    const list = resp?.data?.list || []
+    const count = list.length
+    const avg = count > 0 
+      ? (list.reduce((acc, cur) => acc + (parseFloat(cur.confidence) || 0), 0) / count * 100).toFixed(1) + '%'
+      : '0%'
+    return { count, avgConf: avg }
+  } catch (e) {
+    return { count: 0, avgConf: '0%' }
+  }
+}
+const handleCompare = async () => {
+  if (!store.file) return
+  processing.value = true
+  comparisonDone.value = false
+  try {
+    // 0. Baseline Process (Original foggy detection)
+    const baselineResp = await uploadImage(store.file, 'baseline')
+    const baseData = baselineResp.data
+    baselineResult.detected = baseData?.detected || ''
+    baselineResult.latency = baseData?.latency || 0
+    if (baseData?.timestamp && baseData?.original) {
+        const m = baseData.original.match(/1_original_(.+)\.jpg$/)
+        const basename = m ? m[1] : ''
+        if (basename) {
+            const metrics = await parseDetections(baseData.timestamp, basename)
+            baselineResult.count = metrics.count
+            baselineResult.avgConf = metrics.avgConf
+        }
+    }
+    // 1. Basic Process (Dehaze -> Detect)
+    const basicResp = await uploadImage(store.file, 'normal')
+    const basicData = basicResp.data
+    basicResult.dehazed = basicData?.dehazed || ''
+    basicResult.detected = basicData?.detected || ''
+    basicResult.latency = basicData?.latency || 0
+    if (basicData?.timestamp && basicData?.original) {
+        const m = basicData.original.match(/1_original_(.+)\.jpg$/)
+        const basename = m ? m[1] : ''
+        if (basename) {
+            const metrics = await parseDetections(basicData.timestamp, basename)
+            basicResult.count = metrics.count
+            basicResult.avgConf = metrics.avgConf
+        }
+    }
+    // 2. Multimodal Process (Fusion -> Detect)
+    const multiResp = await uploadImage(store.file, 'multimodal', textPrompt.value)
+    const multiData = multiResp.data
+    multimodalResult.dehazed = multiData?.dehazed || ''
+    multimodalResult.detected = multiData?.detected || ''
+    multimodalResult.latency = multiData?.latency || 0
+    if (multiData?.timestamp && multiData?.original) {
+        const m = multiData.original.match(/1_original_(.+)\.jpg$/)
+        const basename = m ? m[1] : ''
+         if (basename) {
+            const metrics = await parseDetections(multiData.timestamp, basename)
+            multimodalResult.count = metrics.count
+            multimodalResult.avgConf = metrics.avgConf
+        }
+    }
+    comparisonDone.value = true
+    ElMessage.success('对比分析完成')
+  } catch (err) {
+    console.error(err)
+    ElMessage.error('处理失败: ' + (err.message || '未知错误'))
+  } finally {
+    processing.value = false
+  }
+}
+const onHistorySelect = async (item) => {
+  // item is { filename: 'foo.jpg', time: '...' }
+  if (!item.filename) return
+  try {
+      const resp = await api.get('/history', {
+          params: { mode: 'comparison', filename: item.filename }
+      })
+      if (resp.data.success && resp.data.comparison) {
+          const results = resp.data.comparison
+          resetResults()
+          // Use the first available original image as preview
+          const any = results.baseline || results.basic || results.multimodal
+          if (any) {
+              store.inputPreviewUrl = any.original
+              // We don't have the File object, so store.file remains null or previous
+              // If we want to re-run, user needs to upload again or we fetch blob? 
+              // For history view, it's fine.
+          }
+          // Update Baseline
+          if (results.baseline) {
+              await updateResult(baselineResult, results.baseline)
+          }
+          // Update Basic
+          if (results.basic) {
+              await updateResult(basicResult, results.basic)
+          }
+          // Update Multimodal
+          if (results.multimodal) {
+              await updateResult(multimodalResult, results.multimodal)
+              if (results.multimodal.params && results.multimodal.params.text_prompt) {
+                  textPrompt.value = results.multimodal.params.text_prompt
+              }
+          }
+          comparisonDone.value = true
+          ElMessage.success('已加载历史对比结果')
+      }
+  } catch (e) {
+      console.error(e)
+      ElMessage.error('加载历史失败')
+  }
+}
+const updateResult = async (target, source) => {
+    target.dehazed = source.dehazed || source.original // baseline uses original as dehazed in UI logic
+    target.detected = source.detected
+    target.latency = 0 // History doesn't have latency stored, or maybe it does? 
+    // If backend returns 'latency' in history record (I didn't store it explicitly in DB but maybe I should have?)
+    // Currently I don't store latency in DB. So set to 0.
+    if (source.timestamp && source.original) {
+        const m = source.original.match(/1_original_(.+)\.jpg$/)
+        const basename = m ? m[1] : ''
+        if (basename) {
+            const metrics = await parseDetections(source.timestamp, basename)
+            target.count = metrics.count
+            target.avgConf = metrics.avgConf
+        }
+    }
+}
+const exportReport = () => {
+  window.print()
+}
+</script>
+<style scoped>
+.comparison-view {
+  padding: 12px;
+  --panel-gap: 16px;
+  --radius: 12px;
+  --shadow: 0 4px 16px rgba(0,0,0,0.08);
+  --shadow-hover: 0 10px 24px rgba(0,0,0,0.12);
+  --accent-color: #722ed1;
+}
+.aside {
+  padding-right: 12px;
+  position: sticky;
+  top: 12px;
+  align-self: flex-start;
+}
+.control-card { 
+  border: none; 
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transition: box-shadow .25s ease, transform .2s ease;
+}
+.control-card:hover {
+  box-shadow: var(--shadow-hover);
+}
+.card-header { font-weight: bold; font-size: 16px; }
+.mt16 { margin-top: 16px; }
+.mb-4 { margin-bottom: 16px; }
+.w-100 { width: 100%; }
+/* Reuse indicator style */
+.indicator {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background-color: var(--accent-color);
+  margin-right: 8px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.section-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+}
+.guidance-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+.guidance-input :deep(.el-textarea__inner:focus) {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color) inset;
+}
+.prompt-pool { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.pool-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.tags-wrapper { display: flex; flex-wrap: wrap; gap: 8px; }
+.prompt-tag { cursor: pointer; transition: all 0.2s; height: auto; padding: 4px 8px; }
+.prompt-tag:hover { color: var(--accent-color); border-color: var(--accent-color); background-color: rgba(114, 46, 209, 0.1); }
+.tag-content { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.tag-en { font-size: 12px; font-weight: 500; }
+.tag-zh { font-size: 10px; opacity: 0.8; }
+.main-area {
+  padding: 0 0 20px 12px;
+  overflow-y: auto;
+}
+.comparison-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.scheme-card {
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transition: box-shadow .25s ease, transform .2s ease;
+}
+.scheme-card:hover {
+  box-shadow: var(--shadow-hover);
+}
+.scheme-header {
+  display: flex;
+  align-items: center;
+}
+.badge {
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  margin-right: 10px;
+}
+.badge.basic { background-color: #909399; }
+.badge.multimodal { background-color: var(--accent-color); }
+.badge.comparison { background-color: #67C23A; }
+.title { font-weight: bold; font-size: var(--font-subtitle); }
+.pipeline-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+}
+.image-box-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 200px;
+  flex-shrink: 0;
+}
+.img-label {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+}
+.image-box {
+  width: 200px;
+  height: 150px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #ebeef5;
+}
+.pipeline-img {
+  width: 100%;
+  height: 100%;
+  background: #f5f7fa;
+}
+.placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909399;
+  font-size: 12px;
+}
+.arrow {
+  font-size: 20px;
+  color: #C0C4CC;
+  font-weight: bold;
+}
+.arrow.with-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 12px;
+  color: var(--accent-color);
+}
+.text-hint {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #666;
+}
+.arrow-icon {
+  font-size: 20px;
+  color: #C0C4CC;
+}
+.metrics-panel {
+  margin-left: auto;
+  background: #f9fafc;
+  padding: 12px;
+  border-radius: 8px;
+  min-width: 180px;
+  border: 1px solid #ebeef5;
+}
+.metric-item {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.metric-item:last-child { margin-bottom: 0; }
+.value { font-weight: bold; }
+.value.highlight { color: var(--accent-color); }
+.export-section {
+  display: flex;
+  justify-content: center;
+  margin-top: 32px;
+  margin-bottom: 32px;
+}
+.export-btn {
+  width: 240px;
+  font-weight: bold;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+.winner { color: #67C23A; font-weight: bold; }
+@media print {
+  .aside-panel, .aside { display: none; }
+  .el-header { display: none; }
+  .main-area { padding: 0; width: 100%; }
+  .scheme-card { box-shadow: none; border: 1px solid #ccc; page-break-inside: avoid; }
+  .export-section { display: none; }
+}
+</style>
+// File: frontend\src\components\layout\Navigation.vue
+<template>
+  <header class="navigation">
+    <div class="brand-container">
+      <img src="@/assets/images/tubiao.png" alt="Logo" class="logo" />
+      <div class="brand">雾里看花</div>
+      <div class="divider"></div>
+      <div class="subtitle">基于多模态去雾的无人机航拍图像增强与目标检测系统</div>
+    </div>
+    <div class="right">
+      <div class="history-btn-wrapper" v-if="showModeSwitch">
+         <el-button type="primary" plain :icon="Clock" @click="emitOpenHistory">
+           历史记录
+         </el-button>
+      </div>
+      <div class="mode" v-if="showModeSwitch">
+        <el-radio-group v-model="currentMode" size="small" @change="onModeChange" class="mode-switch">
+          <el-radio-button label="basic">基础模式</el-radio-button>
+          <el-radio-button label="multimodal">多模态模式</el-radio-button>
+          <el-radio-button label="compare">对比模式</el-radio-button>
+        </el-radio-group>
+      </div>
+      <div class="auth">
+        <template v-if="auth.isAuthed">
+          <el-dropdown trigger="click">
+            <span class="el-dropdown-link user-profile">
+              <el-avatar :size="32" :icon="UserFilled" class="user-avatar" />
+              <span class="username">{{ auth.user?.username || '用户' }}</span>
+              <el-icon class="el-icon--right"><arrow-down /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="onLogout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+        <template v-else>
+          <el-button size="small" plain @click="toLogin">登录</el-button>
+          <el-button size="small" type="primary" @click="toRegister">注册</el-button>
+        </template>
+      </div>
+    </div>
+  </header>
+</template>
+<script setup>
+import { computed, ref, watch, defineEmits } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { Clock, UserFilled, ArrowDown } from '@element-plus/icons-vue'
+const router = useRouter()
+const route = useRoute()
+const currentMode = ref('basic')
+const auth = useAuthStore()
+const emit = defineEmits(['open-history'])
+const showModeSwitch = computed(() => !['/login', '/register'].includes(route.path))
+watch(() => route.path, (path) => {
+  if (path.includes('multimodal')) {
+    currentMode.value = 'multimodal'
+  } else if (path.includes('compare')) {
+    currentMode.value = 'compare'
+  } else {
+    currentMode.value = 'basic'
+  }
+}, { immediate: true })
+const onModeChange = (val) => {
+  if (val === 'basic') router.push('/baseHome')
+  if (val === 'multimodal') router.push('/multimodal')
+  if (val === 'compare') router.push('/compare')
+}
+const emitOpenHistory = () => {
+    emit('open-history')
+}
+const toLogin = () => {
+  router.push({ path: '/login', query: { redirect: route.fullPath } })
+}
+const toRegister = () => {
+  router.push({ path: '/register', query: { redirect: route.fullPath } })
+}
+const onLogout = () => {
+  auth.logout()
+  router.replace('/login')
+}
+</script>
+<style scoped>
+.navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 64px;
+  background-color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  border-bottom: 1px solid #f0f0f0;
+}
+.brand-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo {
+  height: 62px;
+  width: auto;
+  object-fit: contain;
+}
+.brand {
+  font-weight: 700;
+  font-size: 22px;
+  color: #1a1a1a;
+  letter-spacing: 0.5px;
+}
+.divider {
+  width: 1px;
+  height: 16px;
+  background-color: #dcdfe6;
+}
+.subtitle {
+  font-size: 14px;
+  color: #606266;
+  font-weight: 400;
+}
+.history-btn-wrapper {
+  margin-right: 12px;
+}
+.mode {
+  display: flex;
+  align-items: center;
+}
+.auth {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.auth :deep(.el-dropdown .el-button) {
+  font-size: 16px;
+}
+.el-dropdown-link {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  color: var(--el-color-primary);
+}
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+.user-profile:hover {
+  background-color: #f5f7fa;
+}
+.username {
+  font-size: 14px;
+  font-weight: 500;
+  color: #606266;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-avatar {
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.mode-switch :deep(.el-radio-button__inner) {
+  padding: 8px 16px;
+  font-weight: 500;
+  font-size: 14px;
+}
+/* 响应式适配 */
+@media (max-width: 768px) {
+  .subtitle, .divider {
+    display: none;
+  }
+  .navigation {
+    padding: 0 12px;
+  }
+  .brand {
+    font-size: 16px;
+  }
+}
+</style>
+// File: frontend\src\stores\task.js
+import { defineStore } from 'pinia'
+import { uploadImage, getDetections } from '@/utils/api'
+export const useTaskStore = defineStore('task', {
+  state: () => ({
+    // 文件与参数
+    file: null,
+    inputPreviewUrl: '',
+    dehazeStrength: 0.95,
+    textPrompt: '',
+    // 任务与状态
+    taskId: '',
+    status: 'idle', // idle | uploaded | processing | done | error
+    uploading: false,
+    processing: false,
+    pollingTimer: null,
+    // 结果展示
+    dehazeImageUrl: '',
+    detectImageUrl: '',
+    detections: [],
+    detectionSummary: [],
+    // 错误信息
+    errorMessage: ''
+  }),
+  actions: {
+    setFile(file) {
+      // 释放旧的预览 URL，避免内存泄漏
+      if (this.inputPreviewUrl) {
+        try { URL.revokeObjectURL(this.inputPreviewUrl) } catch (e) {}
+      }
+      this.file = file
+      if (file) {
+        this.inputPreviewUrl = URL.createObjectURL(file)
+        this.status = 'uploaded'
+      } else {
+        this.inputPreviewUrl = ''
+        this.status = 'idle'
+      }
+    },
+    async upload(mode = 'normal', textPrompt = '') {
+      if (!this.file) return
+      this.uploading = true
+      this.errorMessage = ''
+      try {
+        const { data } = await uploadImage(this.file, mode, textPrompt, this.dehazeStrength)
+        // 可选：后端返回上传后的资源ID或路径
+        // 这里保持前端预览即可
+        this.status = 'uploaded'
+        return data
+      } catch (err) {
+        this.status = 'error'
+        this.errorMessage = err?.response?.data?.message || err.message || '上传失败'
+        throw err
+      } finally {
+        this.uploading = false
+      }
+    },
+    async startProcessTask({ mode = 'normal', textPrompt = '' } = {}) {
+      if (!this.file) return
+      this.processing = true
+      this.status = 'processing'
+      this.errorMessage = ''
+      try {
+        const { data } = await uploadImage(this.file, mode, textPrompt, this.dehazeStrength)
+        this.dehazeImageUrl = data?.dehazed || ''
+        this.detectImageUrl = data?.detected || ''
+        // 解析 basename：来自 original 路径 /api/image/{timestamp}/1_original_{basename}.jpg
+        let basename = ''
+        const original = data?.original || ''
+        const m = original.match(/1_original_(.+)\.jpg$/)
+        if (m && m[1]) basename = m[1]
+        // 拉取检测结果列表
+        try {
+          if (data?.timestamp && basename) {
+            const resp = await getDetections(data.timestamp, basename)
+            const list = resp?.data?.list || []
+            this.detections = list
+            const map = {}
+            for (const item of list) {
+              const k = item?.label || ''
+              if (!k) continue
+              map[k] = (map[k] || 0) + 1
+            }
+            this.detectionSummary = Object.keys(map).map(k => ({ label: k, count: map[k] }))
+          } else {
+            this.detections = []
+            this.detectionSummary = []
+          }
+        } catch (e) {
+          this.detections = []
+          this.detectionSummary = []
+        }
+        this.status = 'done'
+        this.processing = false
+      } catch (err) {
+        this.status = 'error'
+        this.processing = false
+        this.errorMessage = err?.response?.data?.error || err.message || '处理失败'
+      }
+    },
+    async loadHistory(item) {
+      this.status = 'processing'
+      this.errorMessage = ''
+      this.file = null 
+      // inputPreviewUrl needs to be set directly, bypass setFile logic
+      this.inputPreviewUrl = item.original
+      this.dehazeImageUrl = item.dehazed
+      this.detectImageUrl = item.detected
+      // Attempt to load detections
+      try {
+        let basename = ''
+        // Extract basename from original url: /api/image/{timestamp}/1_original_{basename}.jpg
+        // Note: item.original might be full url or path
+        const m = item.original.match(/1_original_(.+)\.jpg$/)
+        if (m && m[1]) basename = m[1]
+        if (item.timestamp && basename) {
+            const { data } = await getDetections(item.timestamp, basename)
+            const list = data?.list || []
+            this.detections = list
+            const map = {}
+            for (const d of list) {
+                const k = d.label || 'unknown'
+                map[k] = (map[k] || 0) + 1
+            }
+            this.detectionSummary = Object.keys(map).map(k => ({ label: k, count: map[k] }))
+        } else {
+            this.detections = []
+            this.detectionSummary = []
+        }
+      } catch (e) {
+          console.warn('Failed to load detection details for history item', e)
+          this.detections = []
+          this.detectionSummary = []
+      }
+      this.status = 'done'
+      this.processing = false
+    },
+    reset() {
+      this.file = null
+      if (this.inputPreviewUrl) {
+        try { URL.revokeObjectURL(this.inputPreviewUrl) } catch (e) {}
+      }
+      this.inputPreviewUrl = ''
+      this.dehazeStrength = 0.5
+      this.textPrompt = ''
+      this.taskId = ''
+      this.status = 'idle'
+      this.uploading = false
+      this.processing = false
+      this.dehazeImageUrl = ''
+      this.detectImageUrl = ''
+      this.detections = []
+      this.detectionSummary = []
+      this.errorMessage = ''
+    }
+  }
+})
+// File: backend\app.py
+"""
+雾天图像目标检测Web应用后端
+"""
+from flask import Flask, request, jsonify, send_file, send_from_directory, g
+from flask_cors import CORS
+import os
+import cv2
+import json
+import numpy as np
+from datetime import datetime
+import sqlite3
+from functools import wraps
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from werkzeug.security import generate_password_hash, check_password_hash
+from dehaze_api import DehazeDetector
+from fusion_api import FusionDetector
+# ==================== 初始化 ====================
+app = Flask(__name__, static_folder=None)
+CORS(app)
+# 配置文件
+UPLOAD_FOLDER = 'uploads'
+OUTPUT_FOLDER = 'output'
+MODEL_PATH = 'models/yolo11n.pt'
+AUTH_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 7
+# 创建目录
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
+def get_db():
+    db = getattr(g, '_db', None)
+    if db is None:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        g._db = db
+    return db
+@app.teardown_appcontext
+def close_db(exc):
+    db = getattr(g, '_db', None)
+    if db is not None:
+        db.close()
+def init_db():
+    db = sqlite3.connect(DB_PATH)
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                mode TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                processed_filename TEXT,
+                dehazed_filename TEXT,
+                detected_filename TEXT,
+                output_dir TEXT,
+                params TEXT,
+                timestamp TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+            """
+        )
+        db.commit()
+    finally:
+        db.close()
+def get_token_serializer():
+    return URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='auth-token-v1')
+def create_auth_token(user_id):
+    return get_token_serializer().dumps({'uid': int(user_id)})
+def verify_auth_token(token):
+    try:
+        data = get_token_serializer().loads(token, max_age=AUTH_TOKEN_MAX_AGE_SECONDS)
+        uid = int(data.get('uid'))
+        return uid
+    except (BadSignature, SignatureExpired, ValueError, TypeError):
+        return None
+def require_auth(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth = request.headers.get('Authorization', '')
+        token = ''
+        if auth.lower().startswith('bearer '):
+            token = auth[7:].strip()
+        uid = verify_auth_token(token) if token else None
+        if not uid:
+            return jsonify({'success': False, 'error': '未登录或登录已过期'}), 401
+        db = get_db()
+        row = db.execute('SELECT id, username, created_at FROM users WHERE id = ?', (uid,)).fetchone()
+        if row is None:
+            return jsonify({'success': False, 'error': '用户不存在'}), 401
+        g.current_user = {'id': row['id'], 'username': row['username'], 'created_at': row['created_at']}
+        return fn(*args, **kwargs)
+    return wrapper
+init_db()
+# 初始化检测器
+print("🌫️ 初始化雾天目标检测系统...")
+# 默认检测器 (单模态)
+default_detector = DehazeDetector(MODEL_PATH)
+# 融合检测器 (多模态)
+fusion_detector = FusionDetector(MODEL_PATH)
+# ==================== 路由 ====================
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get('username') or '').strip()
+    password = payload.get('password') or ''
+    if len(username) < 3 or len(username) > 32:
+        return jsonify({'success': False, 'error': '用户名长度需在 3-32 之间'}), 400
+    if len(password) < 6 or len(password) > 128:
+        return jsonify({'success': False, 'error': '密码长度需在 6-128 之间'}), 400
+    password_hash = generate_password_hash(password)
+    created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    db = get_db()
+    try:
+        cur = db.execute(
+            'INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)',
+            (username, password_hash, created_at),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({'success': False, 'error': '用户名已存在'}), 409
+    user_id = cur.lastrowid
+    token = create_auth_token(user_id)
+    return jsonify({
+        'success': True,
+        'token': token,
+        'expires_in': AUTH_TOKEN_MAX_AGE_SECONDS,
+        'user': {'id': user_id, 'username': username, 'created_at': created_at},
+    })
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get('username') or '').strip()
+    password = payload.get('password') or ''
+    if not username or not password:
+        return jsonify({'success': False, 'error': '用户名或密码不能为空'}), 400
+    db = get_db()
+    row = db.execute(
+        'SELECT id, username, password_hash, created_at FROM users WHERE username = ?',
+        (username,),
+    ).fetchone()
+    if row is None:
+        return jsonify({'success': False, 'error': '用户名或密码错误'}), 401
+    if not check_password_hash(row['password_hash'], password):
+        return jsonify({'success': False, 'error': '用户名或密码错误'}), 401
+    token = create_auth_token(row['id'])
+    return jsonify({
+        'success': True,
+        'token': token,
+        'expires_in': AUTH_TOKEN_MAX_AGE_SECONDS,
+        'user': {'id': row['id'], 'username': row['username'], 'created_at': row['created_at']},
+    })
+@app.route('/api/auth/me', methods=['GET'])
+@require_auth
+def me():
+    return jsonify({'success': True, 'user': g.current_user})
+@app.route('/api/auth/ping', methods=['GET'])
+@require_auth
+def auth_ping():
+    return jsonify({'success': True, 'user': g.current_user})
+@app.route('/')
+def index():
+    """前端页面（使用 mist-frontend 构建产物）"""
+    return send_from_directory('../mist-frontend/dist', 'index.html')
+@app.route('/assets/<path:filename>')
+def serve_assets(filename):
+    """提供前端构建后的静态资源"""
+    return send_from_directory('../mist-frontend/dist/assets', filename)
+@app.route('/api/upload', methods=['POST'])
+def upload_image():
+    """上传并处理图像"""
+    if 'image' not in request.files:
+        return jsonify({'success': False, 'error': '没有上传文件'})
+    file = request.files['image']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': '没有选择文件'})
+    try:
+        # 读取图像为numpy数组
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        image_np = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if image_np is None:
+            return jsonify({'success': False, 'error': '无法读取图像'})
+        print(f"📸 处理图片: {file.filename}, 尺寸: {image_np.shape}")
+        # 获取处理模式
+        mode = request.form.get('mode', 'normal')
+        text_prompt = request.form.get('text_prompt', '')
+        # 获取去雾强度 (默认为 0.95)
+        try:
+            dehaze_strength = float(request.form.get('dehaze_strength', 0.95))
+        except ValueError:
+            dehaze_strength = 0.95
+        print(f"🔄 处理模式: {mode}, 文本引导: {text_prompt}, 去雾强度: {dehaze_strength}")
+        if mode in ['fusion', 'multimodal']:
+            # 使用多模态融合检测
+            result = fusion_detector.process(image_np, file.filename, text_prompt=text_prompt)
+        elif mode == 'baseline':
+            # 使用基准检测 (直接在有雾图上检测)
+            result = default_detector.process_baseline(image_np, file.filename)
+        else:
+            # 使用默认单模态检测 (去雾后检测)
+            # 将前端传入的 strength 作为 omega 参数
+            result = default_detector.process(image_np, file.filename, omega=dehaze_strength)
+        # === 记录历史 ===
+        try:
+            auth = request.headers.get('Authorization', '')
+            user_id = None
+            if auth.lower().startswith('bearer '):
+                token = auth[7:].strip()
+                uid = verify_auth_token(token)
+                if uid:
+                    user_id = uid
+            params = {
+                'dehaze_strength': dehaze_strength,
+                'text_prompt': text_prompt
+            }
+            db = get_db()
+            db.execute(
+                '''
+                INSERT INTO history (
+                    user_id, mode, original_filename, processed_filename, 
+                    dehazed_filename, detected_filename, output_dir, params, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    user_id, mode, file.filename, 
+                    result.get('original_filename', ''), 
+                    result.get('dehazed_filename', ''), 
+                    result.get('detected_filename', ''), 
+                    result.get('output_dir', ''), 
+                    json.dumps(params), 
+                    result.get('timestamp', '')
+                )
+            )
+            db.commit()
+        except Exception as e:
+            print(f"⚠️ 记录历史失败: {str(e)}")
+            # 不影响主流程
+        return jsonify({
+            'success': True,
+            'original': f'/api/image/{result["original_filename"]}',
+            'dehazed': f'/api/image/{result["dehazed_filename"]}',
+            'detected': f'/api/image/{result["detected_filename"]}',
+            'num_objects': result['num_objects'],
+            'output_dir': result['output_dir'],
+            'timestamp': result['timestamp'],
+            'latency': result.get('latency', 0)
+        })
+    except Exception as e:
+        print(f"❌ 处理出错: {str(e)}")  # 添加详细错误日志
+        return jsonify({'success': False, 'error': str(e)})
+@app.route('/api/detections/<timestamp>/<basename>')
+def get_detections(timestamp, basename):
+    """读取并返回检测结果TXT为结构化数据
+    参数:
+        timestamp: 处理输出的时间戳目录，例如 20251208_181942
+        basename: 原始文件的基础名（不含扩展名），例如 school夕阳马路(1) final
+    返回:
+        { success: true, list: [ { index, label, confidence } ] }
+    """
+    try:
+        txt_path = os.path.join(OUTPUT_FOLDER, timestamp, f"detection_results_{basename}.txt")
+        if not os.path.exists(txt_path):
+            return jsonify({'success': True, 'list': []})
+        detections = []
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # 匹配形如: "1. car: 置信度 0.86"
+                if "." in line and "置信度" in line:
+                    try:
+                        left, conf_part = line.split(':', 1)
+                        idx_str, label = left.split('.', 1)
+                        idx = int(idx_str.strip())
+                        label = label.strip()
+                        # 提取数值部分
+                        conf_str = conf_part.split('置信度', 1)[1].strip()
+                        confidence = float(conf_str)
+                        detections.append({
+                            'index': idx,
+                            'label': label,
+                            'confidence': confidence
+                        })
+                    except Exception:
+                        # 跳过无法解析的行
+                        continue
+        return jsonify({'success': True, 'list': detections})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+@app.route('/api/image/<path:filename>')
+def get_image(filename):
+    """获取处理后的图像"""
+    # 检查文件在哪个目录
+    possible_paths = [
+        os.path.join(OUTPUT_FOLDER, filename),
+        os.path.join(UPLOAD_FOLDER, filename)
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return send_file(path)
+    return jsonify({'success': False, 'error': '文件不存在'}), 404
+@app.route('/<path:path>')
+def spa_fallback(path):
+    """前端单页应用路由回退"""
+    root = '../mist-frontend/dist'
+    full = os.path.join(root, path)
+    if os.path.exists(full):
+        return send_from_directory(root, path)
+    return send_from_directory(root, 'index.html')
+@app.route('/api/history')
+def get_history():
+    """获取处理历史"""
+    try:
+        mode = request.args.get('mode')
+        filename = request.args.get('filename')
+        # Determine user (optional)
+        auth = request.headers.get('Authorization', '')
+        user_id = None
+        if auth.lower().startswith('bearer '):
+            token = auth[7:].strip()
+            user_id = verify_auth_token(token)
+        db = get_db()
+        # Comparison Mode: Get unique filenames or specific file details
+        if mode == 'comparison':
+            if filename:
+                # Detail view: Get all 3 modes for this file
+                rows = db.execute('''
+                    SELECT * FROM history 
+                    WHERE original_filename = ? AND mode IN ('baseline', 'normal', 'basic', 'multimodal', 'fusion')
+                    ORDER BY created_at DESC
+                ''', (filename,)).fetchall()
+                # Group by mode, take latest
+                results = {}
+                for row in rows:
+                    m = row['mode']
+                    if m == 'fusion': m = 'multimodal'
+                    if m == 'normal': m = 'basic'
+                    if m not in results:
+                        # Parse params safely
+                        try:
+                            params = json.loads(row['params']) if row['params'] else {}
+                        except:
+                            params = {}
+                        results[m] = {
+                            'id': row['id'],
+                            'mode': row['mode'],
+                            'original_filename': row['original_filename'],
+                            'original': f'/api/image/{row["processed_filename"]}' if row["processed_filename"] else '',
+                            'dehazed': f'/api/image/{row["dehazed_filename"]}' if row["dehazed_filename"] else '',
+                            'detected': f'/api/image/{row["detected_filename"]}' if row["detected_filename"] else '',
+                            'timestamp': row['timestamp'],
+                            'params': params,
+                            'output_dir': row['output_dir']
+                        }
+                return jsonify({'success': True, 'comparison': results})
+            else:
+                # List view: Get unique filenames that have comparison data
+                query = "SELECT DISTINCT original_filename, MAX(created_at) as last_time FROM history WHERE mode IN ('baseline', 'normal', 'basic', 'multimodal', 'fusion')"
+                params = []
+                if user_id:
+                    query += " AND user_id = ?"
+                    params.append(user_id)
+                query += " GROUP BY original_filename ORDER BY last_time DESC LIMIT 20"
+                rows = db.execute(query, params).fetchall()
+                history = [{'filename': r['original_filename'], 'time': r['last_time']} for r in rows]
+                return jsonify({'success': True, 'history': history})
+        # Standard Mode (Basic / Multimodal)
+        query = "SELECT * FROM history WHERE 1=1"
+        params = []
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        if mode:
+            if mode == 'basic':
+                query += " AND mode IN ('normal', 'basic')"
+            elif mode == 'multimodal':
+                query += " AND mode IN ('multimodal', 'fusion')"
+            else:
+                query += " AND mode = ?"
+                params.append(mode)
+        query += " ORDER BY created_at DESC LIMIT 20"
+        rows = db.execute(query, params).fetchall()
+        history = []
+        for row in rows:
+            # Parse params safely
+            try:
+                params = json.loads(row['params']) if row['params'] else {}
+            except:
+                params = {}
+            history.append({
+                'id': row['id'],
+                'mode': row['mode'],
+                'original_filename': row['original_filename'],
+                'time': row['created_at'],
+                'original': f'/api/image/{row["processed_filename"]}' if row["processed_filename"] else '',
+                'dehazed': f'/api/image/{row["dehazed_filename"]}' if row["dehazed_filename"] else '',
+                'detected': f'/api/image/{row["detected_filename"]}' if row["detected_filename"] else '',
+                'timestamp': row['timestamp'],
+                'params': params,
+                'output_dir': row['output_dir']
+            })
+        return jsonify({'success': True, 'history': history})
+    except Exception as e:
+        print(f"Error in get_history: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+@app.route('/api/test')
+def test():
+    """测试接口"""
+    return jsonify({
+        'success': True,
+        'message': '雾天目标检测系统API运行正常',
+        'version': '1.0.0'
+    })
+# ==================== 启动应用 ====================
+if __name__ == '__main__':
+    print("🚀 服务器启动在: http://localhost:5000")
+    print(f"📁 上传目录: {UPLOAD_FOLDER}/")
+    print(f"📁 输出目录: {OUTPUT_FOLDER}/")
+    print("=" * 50)
+    app.run(host='0.0.0.0', port=5000, debug=True)
+// File: backend\fusion_api.py
+import cv2
+import numpy as np
+import os
+import torch
+import sys
+from datetime import datetime
+from typing import Tuple, Optional
+# ==========================================
+# 0. Path Configuration for Multibackend
+# ==========================================
+# 确保使用绝对路径，避免环境差异
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(backend_dir)
+multibackend_path = os.path.normpath(os.path.join(project_root, 'multibackend'))
+if multibackend_path not in sys.path:
+    sys.path.append(multibackend_path)
+print(f"📍 [Fusion] Project Root: {project_root}")
+print(f"📍 [Fusion] Multibackend Path: {multibackend_path}")
+# Now we can import from multibackend
+try:
+    from inference_fusion import FusionInference
+    print("✅ [Fusion] Successfully imported FusionInference from multibackend")
+except ImportError as e:
+    print(f"❌ [Fusion] Failed to import FusionInference: {e}")
+    # Fallback import if needed
+    try:
+        from yolosystem.feature_fusion_yolo_simple import create_feature_fusion_yolo
+        from yolosystem.coa_adapter import CoADehazer
+    except ImportError:
+        pass
+# ==========================================
+# 2. Fusion Detector (Calling InferenceInference directly)
+# ==========================================
+class FusionDetector:
+    def __init__(self, model_path=None):
+        """初始化融合检测器"""
+        # 默认权重路径
+        fusion_checkpoint = os.path.normpath(os.path.join(multibackend_path, 'stage2_best.pth'))
+        if model_path is None or (isinstance(model_path, str) and model_path.endswith('.pt')):
+            model_path = fusion_checkpoint
+        print(f"🚀 [Fusion] 正在调用高级融合推理引擎: {model_path}")
+        try:
+            # 直接使用 inference_fusion.py 中的类
+            self.engine = FusionInference(
+                checkpoint_path=model_path,
+                model_size='n'
+            )
+            print(f"✅ [Fusion] 引擎加载成功")
+        except Exception as e:
+            print(f"❌ [Fusion] 引擎加载失败: {e}")
+            raise e
+    def create_output_folders(self):
+        """创建输出目录结构"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_output_dir = "output"
+        output_dir = os.path.join(base_output_dir, timestamp)
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir, timestamp
+    def process(self, image_np, filename, fusion_weight=0.7, text_prompt=''):
+        """
+        处理单张图像：调用 FusionInference 引擎
+        """
+        import time
+        start_time = time.time()
+        print(f"� [Fusion] 开始处理图像: {filename}, mode: fusion, prompt: {text_prompt}")
+        # 1. 准备目录
+        output_dir, timestamp = self.create_output_folders()
+        base_name = os.path.splitext(filename)[0]
+        # 2. 保存临时原图供推理引擎读取
+        temp_input_path = os.path.join(output_dir, f"temp_{filename}")
+        cv2.imwrite(temp_input_path, image_np)
+        print(f"💾 [Fusion] 临时原图已保存: {temp_input_path}")
+        # 3. 执行检测
+        detected_path = os.path.join(output_dir, f"3_fusion_detection_{base_name}.jpg")
+        try:
+            print(f"🔍 [Fusion] 正在调用引擎检测...")
+            detections = self.engine.detect(
+                img_path=temp_input_path,
+                conf_threshold=0.25,
+                save_path=detected_path,
+                dehaze_prompt=text_prompt
+            )
+            num_objects = len(detections)
+            print(f"✨ [Fusion] 检测完成，发现 {num_objects} 个目标")
+        except Exception as e:
+            print(f"❌ [Fusion] 推理过程出错: {e}")
+            import traceback
+            traceback.print_exc()
+            raise e
+        # 4. 再次获取去雾图 (用于前端展示)
+        print(f"🌫️ [Fusion] 正在生成展示用去雾图...")
+        if text_prompt:
+            dehazed = self.engine.dehazer.process_opencv(image_np, prompt=text_prompt)
+        else:
+            dehazed = self.engine.dehazer.process_opencv(image_np)
+        dehazed_path = os.path.join(output_dir, f"2_dehazed_{base_name}.jpg")
+        cv2.imwrite(dehazed_path, dehazed)
+        # 5. 准备正式路径
+        original_path = os.path.join(output_dir, f"1_original_{base_name}.jpg")
+        if os.path.exists(original_path):
+            os.remove(original_path)
+        os.rename(temp_input_path, original_path)
+        # 6. 生成对比图
+        print(f"📊 [Fusion] 正在生成对比图...")
+        comparison_path = os.path.join(output_dir, f"4_comparison_{base_name}.jpg")
+        h, w = 400, 600
+        vis_orig = cv2.resize(image_np, (w, h))
+        vis_dehz = cv2.resize(dehazed, (w, h))
+        detected_vis = cv2.imread(detected_path)
+        if detected_vis is not None:
+            vis_det = cv2.resize(detected_vis, (w, h))
+        else:
+            vis_det = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(vis_orig, "Original Foggy", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(vis_dehz, "Dehazed (CoA)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(vis_det, f"Fusion Det ({num_objects})", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        comparison = np.hstack([vis_orig, vis_dehz, vis_det])
+        cv2.imwrite(comparison_path, comparison)
+        # 7. 保存结果文本
+        if num_objects > 0:
+            txt_path = os.path.join(output_dir, f"detection_results_{base_name}.txt")
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(f"=== 高级特征融合检测结果 (Direct Call) ===\n")
+                f.write(f"图像: {filename}\n")
+                if text_prompt:
+                    f.write(f"Prompt: {text_prompt}\n")
+                f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"检测到目标数量: {num_objects}\n")
+                f.write("-" * 40 + "\n")
+                for i, det in enumerate(detections):
+                    cls = int(det['class'])
+                    conf = float(det['confidence'])
+                    name = self.engine.class_names[cls] if cls < len(self.engine.class_names) else f"ID:{cls}"
+                    f.write(f"{i + 1}. {name}: 置信度 {conf:.2f}\n")
+        # 8. 路径映射
+        original_filename = f"{timestamp}/1_original_{base_name}.jpg"
+        dehazed_filename = f"{timestamp}/2_dehazed_{base_name}.jpg"
+        detected_filename = f"{timestamp}/3_fusion_detection_{base_name}.jpg"
+        latency = (time.time() - start_time) * 1000
+        print(f"🏁 [Fusion] 处理完毕，耗时: {latency:.2f}ms")
+        return {
+            'output_dir': output_dir,
+            'timestamp': timestamp,
+            'original_filename': original_filename,
+            'dehazed_filename': dehazed_filename,
+            'detected_filename': detected_filename,
+            'num_objects': num_objects,
+            'latency': latency
+        }
+// File: backend\dehaze_api.py
+# backend/dehaze_api.py
+import cv2
+import numpy as np
+import os
+from ultralytics import YOLO
+from datetime import datetime
+class DehazeDetector:
+    def __init__(self, model_path='models/yolo11n.pt'):
+        """初始化去雾检测器"""
+        self.model = YOLO(model_path)
+        print(f"✅ 模型加载完成: {model_path}")
+    def create_output_folders(self):
+        """创建输出目录结构"""
+        # 使用当前时间戳作为文件夹名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 创建输出目录结构
+        base_output_dir = "output"
+        output_dir = os.path.join(base_output_dir, timestamp)
+        # 确保目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"📁 输出目录: {output_dir}")
+        return output_dir, timestamp
+    def dark_channel_dehaze(self, image, window_size=15, omega=0.95, t0=0.1):
+        """暗通道先验去雾"""
+        img = image.astype(np.float32) / 255.0
+        dark = np.min(img, axis=2)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (window_size, window_size))
+        dark = cv2.erode(dark, kernel)
+        atmospheric_light = np.percentile(dark, 99.9)
+        transmission = 1 - omega * dark
+        transmission = np.clip(transmission, t0, 1)
+        result = np.zeros_like(img)
+        for i in range(3):
+            result[:, :, i] = (img[:, :, i] - atmospheric_light) / transmission + atmospheric_light
+        result = np.clip(result, 0, 1)
+        return (result * 255).astype(np.uint8)
+    def process(self, image_np, filename, window_size=15, omega=0.95, t0=0.1):
+        """
+        处理单张图像 (去雾 + 检测)
+        """
+        import time
+        start_time = time.time()
+        # 创建输出目录
+        output_dir, timestamp = self.create_output_folders()
+        # 获取基础文件名
+        base_name = os.path.splitext(filename)[0]
+        # 去雾处理
+        dehazed = self.dark_channel_dehaze(image_np, window_size, omega, t0)
+        # 目标检测
+        results = self.model(dehazed)
+        detected = results[0].plot()
+        num_objects = len(results[0].boxes)
+        # 生成文件名
+        original_filename = f"{timestamp}/1_original_{base_name}.jpg"
+        dehazed_filename = f"{timestamp}/2_dehazed_{base_name}.jpg"
+        detected_filename = f"{timestamp}/3_detection_{base_name}.jpg"
+        # 完整路径
+        original_path = os.path.join(output_dir, f"1_original_{base_name}.jpg")
+        dehazed_path = os.path.join(output_dir, f"2_dehazed_{base_name}.jpg")
+        detected_path = os.path.join(output_dir, f"3_detection_{base_name}.jpg")
+        # 保存图像
+        cv2.imwrite(original_path, image_np)
+        cv2.imwrite(dehazed_path, dehazed)
+        cv2.imwrite(detected_path, detected)
+        # 保存检测结果文本
+        if num_objects > 0:
+            txt_path = os.path.join(output_dir, f"detection_results_{base_name}.txt")
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(f"=== 检测结果 ===\n")
+                f.write(f"图像: {filename}\n")
+                f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"检测到目标数量: {num_objects}\n")
+                f.write("-" * 40 + "\n")
+                for i, box in enumerate(results[0].boxes):
+                    cls = int(box.cls)
+                    conf = float(box.conf)
+                    name = results[0].names[cls]
+                    f.write(f"{i + 1}. {name}: 置信度 {conf:.2f}\n")
+        latency = (time.time() - start_time) * 1000  # 转为毫秒
+        return {
+            'output_dir': output_dir,
+            'timestamp': timestamp,
+            'original_filename': original_filename,
+            'dehazed_filename': dehazed_filename,
+            'detected_filename': detected_filename,
+            'num_objects': num_objects,
+            'latency': latency
+        }
+    def process_baseline(self, image_np, filename):
+        """
+        基准处理 (仅在有雾图上直接检测)
+        """
+        import time
+        start_time = time.time()
+        output_dir, timestamp = self.create_output_folders()
+        base_name = os.path.splitext(filename)[0]
+        # 目标检测 (直接在原始有雾图上)
+        results = self.model(image_np)
+        detected = results[0].plot()
+        num_objects = len(results[0].boxes)
+        # 生成文件名
+        original_filename = f"{timestamp}/1_original_{base_name}.jpg"
+        # baseline模式下，去雾图即原图（为了兼容前端结构）
+        dehazed_filename = f"{timestamp}/1_original_{base_name}.jpg" 
+        detected_filename = f"{timestamp}/3_baseline_detection_{base_name}.jpg"
+        # 完整路径
+        original_path = os.path.join(output_dir, f"1_original_{base_name}.jpg")
+        detected_path = os.path.join(output_dir, f"3_baseline_detection_{base_name}.jpg")
+        # 保存图像
+        cv2.imwrite(original_path, image_np)
+        cv2.imwrite(detected_path, detected)
+        # 保存检测结果文本
+        if num_objects > 0:
+            txt_path = os.path.join(output_dir, f"detection_results_{base_name}.txt")
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(f"=== Baseline 检测结果 (直接检测) ===\n")
+                f.write(f"图像: {filename}\n")
+                f.write(f"检测到目标数量: {num_objects}\n")
+                for i, box in enumerate(results[0].boxes):
+                    cls = int(box.cls)
+                    conf = float(box.conf)
+                    name = results[0].names[cls]
+                    f.write(f"{i + 1}. {name}: 置信度 {conf:.2f}\n")
+        latency = (time.time() - start_time) * 1000  # 转为毫秒
+        return {
+            'output_dir': output_dir,
+            'timestamp': timestamp,
+            'original_filename': original_filename,
+            'dehazed_filename': dehazed_filename,
+            'detected_filename': detected_filename,
+            'num_objects': num_objects,
+            'latency': latency
+        }
+// File: multibackend\inference_fusion.py
+"""
+Feature Fusion YOLO 推理脚本
+用于测试和部署融合模型
+"""
+import torch
+import cv2
+import numpy as np
+from pathlib import Path
+import argparse
+from yolosystem.feature_fusion_yolo_simple import create_feature_fusion_yolo
+from yolosystem.coa_adapter import CoADehazer
+class FusionInference:
+    """融合模型推理器"""
+    def __init__(self, checkpoint_path: str, model_size: str = 's'):
+        """
+        初始化推理器
+        Args:
+            checkpoint_path: 训练好的模型权重路径
+            model_size: YOLO模型大小 ('n', 's', 'm', 'l', 'x')
+        """
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"使用设备: {self.device}")
+        # 加载融合模型
+        print(f"加载融合模型: {checkpoint_path}")
+        self.model = create_feature_fusion_yolo(
+            model_size=model_size,
+            # num_classes=80,  # COCO数据集类别数
+            num_classes=10,  # VisDrone数据集类别数
+            pretrained=True
+        )
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        # 去雾模块
+        # self.dehazer = DehazingModule()
+        print("加载 CoA 去雾模型...")
+        self.dehazer = CoADehazer()
+        # VisDrone类别名称
+        self.class_names = ['pedestrian', 'people', 'bicycle', 'car', 'van',
+            'truck', 'tricycle', 'awning-tricycle', 'bus', 'motor'
+        ]
+        # 新增：生成随机颜色表，用于不同类别的可视化
+        np.random.seed(42)  # 固定种子保证每次运行颜色一致
+        self.colors = [tuple(np.random.randint(0, 255, 3).tolist()) for _ in range(len(self.class_names))]
+        print("✓ 模型加载完成")
+    def preprocess(self, img: np.ndarray) -> torch.Tensor:
+        """预处理图像"""
+        # 调整大小
+        img_resized = cv2.resize(img, (640, 640))
+        # 归一化
+        img_normalized = img_resized.astype(np.float32) / 255.0
+        # 转换为tensor
+        img_tensor = torch.from_numpy(img_normalized).permute(2, 0, 1).unsqueeze(0)
+        return img_tensor.to(self.device)
+    def detect(self, img_path: str, conf_threshold: float = 0.25, save_path: str = None, dehaze_prompt: str = None):
+        """
+        对单张图像进行检测
+        Args:
+            img_path: 图像路径
+            conf_threshold: 置信度阈值
+            save_path: 结果保存路径
+            dehaze_prompt: (可选) 用于指导去雾的文本描述，如 "Clear street scene without fog"
+        """
+        # 读取图像
+        img = cv2.imread(img_path)
+        if img is None:
+            raise ValueError(f"无法读取图像: {img_path}")
+        h_orig, w_orig = img.shape[:2]
+        # 1. 去雾 (BGR)
+        print("正在去雾 (CoA)...")
+        if dehaze_prompt:
+             print(f"应用文本指导: '{dehaze_prompt}'")
+             img_dehazed_bgr = self.dehazer.process_opencv(img, prompt=dehaze_prompt)
+        else:
+             img_dehazed_bgr = self.dehazer.process_opencv(img)
+        # 2. 转换颜色空间为 RGB (供 YOLO 推理)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_dehazed_rgb = cv2.cvtColor(img_dehazed_bgr, cv2.COLOR_BGR2RGB)
+        # 预处理
+        img_foggy_tensor = self.preprocess(img_rgb)
+        img_dehazed_tensor = self.preprocess(img_dehazed_rgb)
+        # 推理
+        print("正在检测...")
+        with torch.no_grad():
+            results = self.model(img_foggy_tensor, img_dehazed_tensor)
+        # 解析结果
+        detections = self.parse_results(results, conf_threshold, (h_orig, w_orig))
+        print(f"检测到 {len(detections)} 个目标")
+        # 可视化改进：仅保存最终融合后的结果图
+        if save_path:
+            # 这里的 vis_img 是在“去雾图”的基础上绘制了不同颜色的检测框
+            vis_img = self.visualize(img_dehazed_bgr, detections)
+            cv2.imwrite(save_path, vis_img)
+            print(f"✓ 融合检测结果已保存到: {save_path}")
+        return detections
+    def parse_results(self, results, conf_threshold: float = 0.25, orig_shape=None):
+        """解析YOLO输出"""
+        # 尝试从不同的位置导入 NMS，兼容不同版本的 Ultralytics
+        try:
+            from ultralytics.utils.nms import non_max_suppression
+        except ImportError:
+            try:
+                from ultralytics.utils.ops import non_max_suppression
+            except ImportError:
+                raise ImportError("无法从 ultralytics.utils.nms 或 ultralytics.utils.ops 导入 non_max_suppression")
+        detections = []
+        if isinstance(results, (list, tuple)):
+            results = results[0]  # 取第一个输出 (推理张量)
+        # 执行 NMS
+        preds = non_max_suppression(
+            results, 
+            conf_thres=conf_threshold, 
+            iou_thres=0.45
+        )
+        det = preds[0]
+        if len(det) == 0:
+            return []
+        # 获取尺寸用于缩放
+        if orig_shape:
+            h_orig, w_orig = orig_shape
+            det[:, 0] *= (w_orig / 640)
+            det[:, 1] *= (h_orig / 640)
+            det[:, 2] *= (w_orig / 640)
+            det[:, 3] *= (h_orig / 640)
+        for *xyxy, conf, cls in det:
+            detections.append({
+                'bbox': [float(x) for x in xyxy],
+                'confidence': float(conf),
+                'class': int(cls)
+            })
+        return detections
+    def visualize(self, img: np.ndarray, detections: list) -> np.ndarray:
+        """可视化检测结果 (带颜色区分)"""
+        vis_img = img.copy()
+        for det in detections:
+            x1, y1, x2, y2 = [int(v) for v in det['bbox']]
+            conf = det['confidence']
+            cls = det['class']
+            # 获取该类别的颜色
+            color = self.colors[cls % len(self.colors)]
+            label_name = self.class_names[cls] if cls < len(self.class_names) else f"ID:{cls}"
+            # 绘制边界框
+            cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
+            # 绘制标签背景和文字
+            label = f"{label_name} {conf:.2f}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+            cv2.rectangle(vis_img, (x1, y1 - th - 5), (x1 + tw, y1), color, -1)
+            cv2.putText(vis_img, label, (x1, y1 - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        return vis_img
+    def detect_video(self, video_path: str, output_path: str, conf_threshold: float = 0.25, dehaze_prompt: str = None):
+        """
+        对视频进行检测
+        """
+        cap = cv2.VideoCapture(video_path)
+        # 获取视频属性
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # 创建视频写入器
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        print(f"处理视频: {video_path}")
+        print(f"总帧数: {total_frames}, FPS: {fps}")
+        frame_idx = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            print(f"处理帧 {frame_idx}/{total_frames}", end='\r')
+            # 去雾和检测
+            # 注意：这里我们复用 detect() 的核心逻辑，但为了效率直接处理 frame
+            # 视频帧通常不建议逐帧做 TTA (太慢)，除非非常有必要
+            if dehaze_prompt and frame_idx == 1:
+                print(f"\n注意：视频模式下暂不支持逐帧文本优化（速度过慢），仅使用默认去雾。")
+            img_dehazed_bgr = self.dehazer.process_opencv(frame)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_dehazed_rgb = cv2.cvtColor(img_dehazed_bgr, cv2.COLOR_BGR2RGB)
+            # 预处理
+            t1 = self.preprocess(frame_rgb)
+            t2 = self.preprocess(frame_dehazed_rgb)
+            # 推理
+            with torch.no_grad():
+                results = self.model(t1, t2)
+            # 解析并将坐标还原到原图尺寸 (height, width)
+            detections = self.parse_results(results, conf_threshold, (height, width))
+            # 可视化结果并写入视频
+            vis_frame = self.visualize(frame, detections)
+            out.write(vis_frame)
+        cap.release()
+        out.release()
+        print(f"\n✓ 视频处理完成: {output_path}")
+def main():
+    parser = argparse.ArgumentParser(description='Feature Fusion YOLO 推理与测试脚本')
+    parser.add_argument('--checkpoint', type=str, required=True, help='融合模型权重的路径 (.pth)')
+    parser.add_argument('--input', type=str, required=True, help='输入图片或视频的路径')
+    parser.add_argument('--output', type=str, default='output_result.jpg', help='输出结果保存路径')
+    parser.add_argument('--model-size', type=str, default='n', choices=['n', 's', 'm', 'l', 'x'], help='YOLO模型规模')
+    parser.add_argument('--conf', type=float, default=0.25, help='置信度阈值')
+    parser.add_argument('--video', action='store_true', help='如果输入是视频请加上此参数')
+    parser.add_argument('--prompt', type=str, default=None, help='(可选) 用于指导图像去雾的文本描述')
+    args = parser.parse_args()
+    # 初始化推理器
+    inferencer = FusionInference(
+        checkpoint_path=args.checkpoint,
+        model_size=args.model_size
+    )
+    # 执行检测任务
+    if args.video:
+        # 如果没有指定视频后缀，默认mp4
+        output_path = args.output if args.output.endswith('.mp4') else 'output_result.mp4'
+        inferencer.detect_video(
+            video_path=args.input,
+            output_path=output_path,
+            conf_threshold=args.conf,
+            dehaze_prompt=args.prompt
+        )
+    else:
+        inferencer.detect(
+            img_path=args.input,
+            conf_threshold=args.conf,
+            save_path=args.output,
+            dehaze_prompt=args.prompt
+        )
+if __name__ == '__main__':
+    main()
+// File: multibackend\yolosystem\feature_fusion_yolo.py
+"""
+Feature-level Fusion YOLO Network
+基于YOLOv11的特征级融合网络，用于雾天目标检测
+核心思想：
+1. 双路输入：原图 + 去雾图
+2. 特征提取：分别提取两路特征
+3. 特征融合：在backbone的多个层级进行特征融合
+4. 联合检测：使用融合后的特征进行目标检测
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math  # Add math import
+from ultralytics import YOLO
+from ultralytics.nn.modules import Conv, C2f, SPPF, Detect
+from typing import List, Tuple, Optional
+class FeatureFusionModule(nn.Module):
+    """
+    特征融合模块
+    融合策略：
+    1. Concatenation + 1x1 Conv（简单有效）
+    2. Attention-based Fusion（自适应权重）
+    """
+    def __init__(self, in_channels: int, fusion_type: str = 'attention'):
+        """
+        Args:
+            in_channels: 输入特征通道数
+            fusion_type: 融合类型 ('concat', 'attention', 'weighted')
+        """
+        super().__init__()
+        self.fusion_type = fusion_type
+        if fusion_type == 'concat':
+            # 简单拼接 + 1x1卷积降维
+            self.fusion = nn.Sequential(
+                Conv(in_channels * 2, in_channels, k=1),
+                nn.BatchNorm2d(in_channels),
+                nn.SiLU()
+            )
+        elif fusion_type == 'attention':
+            # 基于注意力的自适应融合
+            self.attention = nn.Sequential(
+                Conv(in_channels * 2, in_channels // 4, k=1),
+                nn.SiLU(),
+                Conv(in_channels // 4, 2, k=1),
+                nn.Softmax(dim=1)
+            )
+            self.fusion = Conv(in_channels, in_channels, k=1)
+        elif fusion_type == 'weighted':
+            # 可学习的加权融合
+            self.weight_original = nn.Parameter(torch.tensor(0.5))
+            self.weight_dehazed = nn.Parameter(torch.tensor(0.5))
+            self.fusion = Conv(in_channels, in_channels, k=1)
+    def forward(self, feat_original: torch.Tensor, feat_dehazed: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            feat_original: 原图特征 [B, C, H, W]
+            feat_dehazed: 去雾图特征 [B, C, H, W]
+        Returns:
+            融合后的特征 [B, C, H, W]
+        """
+        if self.fusion_type == 'concat':
+            # 拼接后降维
+            concat_feat = torch.cat([feat_original, feat_dehazed], dim=1)
+            return self.fusion(concat_feat)
+        elif self.fusion_type == 'attention':
+            # 自适应注意力融合
+            concat_feat = torch.cat([feat_original, feat_dehazed], dim=1)
+            attention_weights = self.attention(concat_feat)  # [B, 2, H, W]
+            # 分离两个权重
+            w_orig = attention_weights[:, 0:1, :, :]  # [B, 1, H, W]
+            w_dehz = attention_weights[:, 1:2, :, :]  # [B, 1, H, W]
+            # 加权融合
+            fused = w_orig * feat_original + w_dehz * feat_dehazed
+            return self.fusion(fused)
+        elif self.fusion_type == 'weighted':
+            # 可学习权重融合
+            w_orig = torch.sigmoid(self.weight_original)
+            w_dehz = torch.sigmoid(self.weight_dehazed)
+            # 归一化权重
+            total = w_orig + w_dehz
+            w_orig = w_orig / total
+            w_dehz = w_dehz / total
+            fused = w_orig * feat_original + w_dehz * feat_dehazed
+            return self.fusion(fused)
+class DualPathBackbone(nn.Module):
+    """
+    双路Backbone
+    结构：
+    - 两个共享权重的特征提取器
+    - 在多个层级进行特征融合
+    """
+    def __init__(self, base_model: YOLO, fusion_layers: List[int] = [3, 6, 9]):
+        """
+        Args:
+            base_model: 基础YOLOv11模型
+            fusion_layers: 在哪些层进行特征融合
+        """
+        super().__init__()
+        # 获取YOLOv11的backbone
+        self.model = base_model.model
+        self.fusion_layers = fusion_layers
+        # 创建特征融合模块
+        self.fusion_modules = nn.ModuleDict()
+        # 根据YOLOv11架构确定各层的通道数
+        # YOLOv11n的通道数: [64, 128, 256, 512]
+        channel_configs = {
+            3: 128,   # P2层
+            6: 256,   # P3层
+            9: 512    # P4层
+        }
+        for layer_idx in fusion_layers:
+            if layer_idx in channel_configs:
+                channels = channel_configs[layer_idx]
+                self.fusion_modules[f'fusion_{layer_idx}'] = FeatureFusionModule(
+                    channels, fusion_type='attention'
+                )
+    def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            img_original: 原图 [B, 3, H, W]
+            img_dehazed: 去雾图 [B, 3, H, W]
+        Returns:
+            融合后的单个特征张量（用于后续处理）
+        """
+        # 存储所有层的输出
+        feats_original = []
+        feats_dehazed = []
+        # 原图特征提取 - 通过完整的backbone
+        x_orig = img_original
+        for i, layer in enumerate(self.model.model[:10]):  # backbone部分
+            x_orig = layer(x_orig)
+            feats_original.append(x_orig)
+        # 去雾图特征提取（共享权重）
+        x_dehz = img_dehazed
+        for i, layer in enumerate(self.model.model[:10]):
+            x_dehz = layer(x_dehz)
+            feats_dehazed.append(x_dehz)
+        # 在指定层进行特征融合，其他层使用原图特征
+        fused_features = []
+        for i in range(len(feats_original)):
+            if i in self.fusion_layers and f'fusion_{i}' in self.fusion_modules:
+                # 融合层
+                fusion_module = self.fusion_modules[f'fusion_{i}']
+                fused_feat = fusion_module(feats_original[i], feats_dehazed[i])
+                fused_features.append(fused_feat)
+            else:
+                # 非融合层，直接使用原图特征
+                fused_features.append(feats_original[i])
+        # 返回最后一层的融合特征
+        return fused_features[-1]
+class FeatureFusionYOLO(nn.Module):
+    """
+    Feature-level Fusion YOLO完整网络
+    架构：
+    输入: 原图 + 去雾图
+    ├─> 双路Backbone (共享权重)
+    ├─> 多层级特征融合
+    ├─> Neck (FPN + PAN)
+    └─> Head (检测头)
+    """
+    def __init__(self,
+                 model_size: str = 'n',
+                 num_classes: int = 6,
+                 fusion_layers: List[int] = [3, 6, 9],
+                 pretrained: bool = True):
+        """
+        Args:
+            model_size: 模型大小 ('n', 's', 'm', 'l', 'x')
+            num_classes: 类别数量
+            fusion_layers: 特征融合层
+            pretrained: 是否使用预训练权重
+        """
+        super().__init__()
+        # 加载基础YOLOv11模型
+        model_name = f'yolo11{model_size}.pt' if pretrained else f'yolo11{model_size}.yaml'
+        self.base_model = YOLO(model_name)
+        # 双路Backbone
+        self.dual_backbone = DualPathBackbone(self.base_model, fusion_layers)
+        # Neck和Head使用原始YOLO的
+        self.neck_head = self.base_model.model.model[10:]  # Neck + Head部分
+        self.num_classes = num_classes
+        self.fusion_layers = fusion_layers
+        # 自动适配 Head 的类别数
+        self._update_detect_head(num_classes)
+    def _update_detect_head(self, num_classes):
+        """
+        根据指定的类别数自动更新Detect Head
+        当预训练模型类别数(80)与当前数据类别数不一致时，
+        自动替换最后分类层的卷积通道。
+        """
+        # 遍历 neck_head 找到 Detect 层
+        for module in self.neck_head:
+            if isinstance(module, Detect):
+                if module.nc != num_classes:
+                    print(f"自动适配: Detect Head 类别数从 {module.nc} 更新为 {num_classes}")
+                    # 1. 更新属性
+                    module.nc = num_classes
+                    # 2. 更新分类分支的卷积层 (cv3)
+                    # Detect 层的 cv3 是一个 ModuleList，包含针对不同尺度的分类头
+                    # 每个元素通常是一个 Sequential
+                    for i, conv_module in enumerate(module.cv3):
+                        # 在 YOLOv8/11 中, cv3 的最后一层是负责输出类别概率的 Conv2d
+                        # 结构: [Conv, Conv, ..., Conv2d(c2, nc, 1)]
+                        # 获取最后一层
+                        last_layer = conv_module[-1]
+                        if isinstance(last_layer, nn.Conv2d):
+                            # 获取输入通道数
+                            in_channels = last_layer.in_channels
+                            # 创建新的卷积层 (输出通道 = num_classes)
+                            # 注意：这里不需要放到 device，因为整个 model 之后会被 .to(device)
+                            new_conv = nn.Conv2d(in_channels, num_classes, 1, bias=True)
+                            # 初始化权重 (参考 Ultralytics 的初始化策略)
+                            # 这里的 bias 初始化有助于训练初期的稳定性
+                            stride = module.stride[i] if hasattr(module, 'stride') else 32
+                            # 这里的 bias 初始化是一个经验值，模拟 YOLO 的初始化
+                            b = new_conv.bias.view(1, -1)
+                            b.data.fill_(-math.log((1 - 0.01) / 0.01))
+                            new_conv.bias = torch.nn.Parameter(b.view(-1))
+                            # 替换旧层
+                            conv_module[-1] = new_conv
+                break
+    def train(self, mode: bool = True):
+        """
+        重写train方法，避免调用YOLO的train方法
+        """
+        # 只设置dual_backbone和neck_head的训练模式
+        self.training = mode
+        self.dual_backbone.train(mode)
+        for layer in self.neck_head:
+            if hasattr(layer, 'train'):
+                layer.train(mode)
+        return self
+    def eval(self):
+        """
+        重写eval方法
+        """
+        return self.train(False)
+    def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            img_original: 原图 [B, 3, H, W]
+            img_dehazed: 去雾图 [B, 3, H, W]
+        Returns:
+            检测结果
+        """
+        # 获取融合后的backbone特征
+        fused_feature = self.dual_backbone(img_original, img_dehazed)
+        # 通过Neck和Head
+        x = fused_feature
+        for layer in self.neck_head:
+            x = layer(x)
+        return x
+    def predict(self, img_original: torch.Tensor, img_dehazed: torch.Tensor,
+                conf_threshold: float = 0.25, iou_threshold: float = 0.45):
+        """
+        预测接口
+        Args:
+            img_original: 原图
+            img_dehazed: 去雾图
+            conf_threshold: 置信度阈值
+            iou_threshold: NMS的IoU阈值
+        Returns:
+            检测结果
+        """
+        self.eval()
+        with torch.no_grad():
+            outputs = self.forward(img_original, img_dehazed)
+            # 后处理（NMS等）
+            # 这里需要根据YOLOv11的输出格式进行后处理
+            return outputs
+def create_feature_fusion_yolo(model_size: str = 'n',
+                               num_classes: int = 6,
+                               pretrained: bool = True) -> FeatureFusionYOLO:
+    """
+    创建Feature-level Fusion YOLO模型
+    Args:
+        model_size: 模型大小 ('n', 's', 'm', 'l', 'x')
+        num_classes: 类别数量
+        pretrained: 是否使用预训练权重
+    Returns:
+        FeatureFusionYOLO模型
+    """
+    model = FeatureFusionYOLO(
+        model_size=model_size,
+        num_classes=num_classes,
+        fusion_layers=[3, 6, 9],  # 在P2, P3, P4层融合
+        pretrained=pretrained
+    )
+    return model
+if __name__ == '__main__':
+    # 测试代码
+    print("创建Feature-level Fusion YOLO模型...")
+    model = create_feature_fusion_yolo(model_size='n', num_classes=6)
+    # 测试前向传播
+    batch_size = 2
+    img_size = 640
+    img_original = torch.randn(batch_size, 3, img_size, img_size)
+    img_dehazed = torch.randn(batch_size, 3, img_size, img_size)
+    print(f"输入形状: {img_original.shape}")
+    # 前向传播
+    outputs = model(img_original, img_dehazed)
+    print(f"输出形状: {outputs.shape if isinstance(outputs, torch.Tensor) else 'Multiple outputs'}")
+    print("\n模型创建成功！")
+    print(f"总参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+    print(f"可训练参数: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.2f}M")
+// File: multibackend\yolosystem\fusion.py
+"""
+Fusion Detection Module
+实现双路检测+智能融合策略，真正结合去雾和目标检测
+"""
+import numpy as np
+import cv2
+from typing import List, Dict, Tuple, Optional
+from .detection import YOLODetector
+from .dehazing import DehazingModule
+class ImageQualityAssessment:
+    """
+    图像质量评估工具
+    用于评估图像的清晰度、对比度等指标
+    """
+    @staticmethod
+    def calculate_sharpness(img: np.ndarray) -> float:
+        """
+        计算图像清晰度（使用Laplacian方差）
+        Args:
+            img: 输入图像
+        Returns:
+            清晰度分数（越大越清晰）
+        """
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        sharpness = laplacian.var()
+        return float(sharpness)
+    @staticmethod
+    def calculate_contrast(img: np.ndarray) -> float:
+        """
+        计算图像对比度（使用标准差）
+        Args:
+            img: 输入图像
+        Returns:
+            对比度分数
+        """
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img
+        contrast = gray.std()
+        return float(contrast)
+    @staticmethod
+    def calculate_brightness(img: np.ndarray) -> float:
+        """
+        计算图像亮度（平均值）
+        Args:
+            img: 输入图像
+        Returns:
+            亮度值
+        """
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img
+        brightness = gray.mean()
+        return float(brightness)
+    @staticmethod
+    def calculate_entropy(img: np.ndarray) -> float:
+        """
+        计算图像信息熵（信息量）
+        Args:
+            img: 输入图像
+        Returns:
+            信息熵值
+        """
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img
+        # 计算直方图
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist = hist.flatten() / hist.sum()
+        # 计算熵
+        hist = hist[hist > 0]  # 移除零值
+        entropy = -np.sum(hist * np.log2(hist))
+        return float(entropy)
+    @staticmethod
+    def assess_image_quality(img: np.ndarray) -> Dict[str, float]:
+        """
+        综合评估图像质量
+        Args:
+            img: 输入图像
+        Returns:
+            包含各项质量指标的字典
+        """
+        return {
+            'sharpness': ImageQualityAssessment.calculate_sharpness(img),
+            'contrast': ImageQualityAssessment.calculate_contrast(img),
+            'brightness': ImageQualityAssessment.calculate_brightness(img),
+            'entropy': ImageQualityAssessment.calculate_entropy(img)
+        }
+class FusionDetector:
+    """
+    融合检测器
+    结合原图和去雾图的检测结果，实现智能融合
+    """
+    def __init__(self,
+                 detector: YOLODetector,
+                 dehazer: Optional[DehazingModule] = None,
+                 fusion_strategy: str = 'adaptive',
+                 iou_threshold: float = 0.5):
+        """
+        初始化融合检测器
+        Args:
+            detector: YOLO检测器实例
+            dehazer: 去雾模块实例，如果为None则会创建默认的
+            fusion_strategy: 融合策略 ('adaptive', 'confidence', 'quality', 'both')
+            iou_threshold: 用于匹配检测框的IoU阈值
+        """
+        self.detector = detector
+        self.dehazer = dehazer if dehazer is not None else DehazingModule()
+        self.fusion_strategy = fusion_strategy
+        self.iou_threshold = iou_threshold
+        self.quality_assessor = ImageQualityAssessment()
+    def calculate_iou(self, box1: List[float], box2: List[float]) -> float:
+        """
+        计算两个边界框的IoU
+        Args:
+            box1, box2: 边界框 [x1, y1, x2, y2]
+        Returns:
+            IoU值
+        """
+        x1_inter = max(box1[0], box2[0])
+        y1_inter = max(box1[1], box2[1])
+        x2_inter = min(box1[2], box2[2])
+        y2_inter = min(box1[3], box2[3])
+        if x2_inter < x1_inter or y2_inter < y1_inter:
+            return 0.0
+        inter_area = (x2_inter - x1_inter) * (y2_inter - y1_inter)
+        box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union_area = box1_area + box2_area - inter_area
+        iou = inter_area / union_area if union_area > 0 else 0.0
+        return iou
+    def match_detections(self,
+                        detections1: List[Dict],
+                        detections2: List[Dict]) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
+        """
+        匹配两组检测结果
+        Args:
+            detections1: 第一组检测结果
+            detections2: 第二组检测结果
+        Returns:
+            - matched_pairs: 匹配的索引对列表 [(idx1, idx2), ...]
+            - unmatched1: 第一组中未匹配的索引
+            - unmatched2: 第二组中未匹配的索引
+        """
+        matched_pairs = []
+        unmatched1 = list(range(len(detections1)))
+        unmatched2 = list(range(len(detections2)))
+        # 计算所有检测框对的IoU
+        iou_matrix = np.zeros((len(detections1), len(detections2)))
+        for i, det1 in enumerate(detections1):
+            for j, det2 in enumerate(detections2):
+                # 只匹配相同类别的检测
+                if det1['class_id'] == det2['class_id']:
+                    iou_matrix[i, j] = self.calculate_iou(det1['bbox'], det2['bbox'])
+        # 贪心匹配：每次选择IoU最大的配对
+        while iou_matrix.size > 0:
+            max_iou = iou_matrix.max()
+            if max_iou < self.iou_threshold:
+                break
+            # 找到最大IoU的位置
+            max_idx = np.unravel_index(iou_matrix.argmax(), iou_matrix.shape)
+            i, j = max_idx
+            # 转换为原始索引
+            orig_i = unmatched1[i]
+            orig_j = unmatched2[j]
+            matched_pairs.append((orig_i, orig_j))
+            # 从未匹配列表中移除
+            unmatched1.remove(orig_i)
+            unmatched2.remove(orig_j)
+            # 从矩阵中移除已匹配的行和列
+            iou_matrix = np.delete(iou_matrix, i, axis=0)
+            iou_matrix = np.delete(iou_matrix, j, axis=1)
+        return matched_pairs, unmatched1, unmatched2
+    def fuse_detections_adaptive(self,
+                                 original_detections: List[Dict],
+                                 dehazed_detections: List[Dict],
+                                 original_quality: Dict[str, float],
+                                 dehazed_quality: Dict[str, float]) -> List[Dict]:
+        """
+        自适应融合策略：根据图像质量和检测置信度综合决策
+        Args:
+            original_detections: 原图检测结果
+            dehazed_detections: 去雾图检测结果
+            original_quality: 原图质量指标
+            dehazed_quality: 去雾图质量指标
+        Returns:
+            融合后的检测结果
+        """
+        matched_pairs, unmatched_orig, unmatched_dehazed = self.match_detections(
+            original_detections, dehazed_detections
+        )
+        fused_detections = []
+        # 计算质量权重（归一化）
+        quality_weight_dehazed = self._calculate_quality_weight(original_quality, dehazed_quality)
+        quality_weight_original = 1.0 - quality_weight_dehazed
+        # 处理匹配的检测对
+        for idx_orig, idx_dehazed in matched_pairs:
+            det_orig = original_detections[idx_orig]
+            det_dehazed = dehazed_detections[idx_dehazed]
+            # 置信度加权
+            conf_orig = det_orig['confidence']
+            conf_dehazed = det_dehazed['confidence']
+            # 综合权重 = 质量权重 * 置信度
+            weight_orig = quality_weight_original * conf_orig
+            weight_dehazed = quality_weight_dehazed * conf_dehazed
+            # 选择权重更高的检测结果
+            if weight_orig > weight_dehazed:
+                fused_det = det_orig.copy()
+                fused_det['source'] = 'original'
+                fused_det['fusion_weight'] = weight_orig
+            else:
+                fused_det = det_dehazed.copy()
+                fused_det['source'] = 'dehazed'
+                fused_det['fusion_weight'] = weight_dehazed
+            # 记录融合信息
+            fused_det['matched'] = True
+            fused_det['original_conf'] = conf_orig
+            fused_det['dehazed_conf'] = conf_dehazed
+            fused_detections.append(fused_det)
+        # 添加原图中未匹配的检测（如果质量权重足够高）
+        for idx in unmatched_orig:
+            det = original_detections[idx].copy()
+            det['source'] = 'original'
+            det['matched'] = False
+            det['fusion_weight'] = quality_weight_original * det['confidence']
+            # 只保留高置信度或高质量权重的检测
+            if det['confidence'] > 0.4 or quality_weight_original > 0.6:
+                fused_detections.append(det)
+        # 添加去雾图中未匹配的检测（如果质量权重足够高）
+        for idx in unmatched_dehazed:
+            det = dehazed_detections[idx].copy()
+            det['source'] = 'dehazed'
+            det['matched'] = False
+            det['fusion_weight'] = quality_weight_dehazed * det['confidence']
+            # 只保留高置信度或高质量权重的检测
+            if det['confidence'] > 0.4 or quality_weight_dehazed > 0.6:
+                fused_detections.append(det)
+        return fused_detections
+    def fuse_detections_confidence(self,
+                                   original_detections: List[Dict],
+                                   dehazed_detections: List[Dict]) -> List[Dict]:
+        """
+        基于置信度的融合策略：始终选择置信度更高的结果
+        Args:
+            original_detections: 原图检测结果
+            dehazed_detections: 去雾图检测结果
+        Returns:
+            融合后的检测结果
+        """
+        matched_pairs, unmatched_orig, unmatched_dehazed = self.match_detections(
+            original_detections, dehazed_detections
+        )
+        fused_detections = []
+        # 处理匹配的检测对：选择置信度更高的
+        for idx_orig, idx_dehazed in matched_pairs:
+            det_orig = original_detections[idx_orig]
+            det_dehazed = dehazed_detections[idx_dehazed]
+            if det_orig['confidence'] > det_dehazed['confidence']:
+                fused_det = det_orig.copy()
+                fused_det['source'] = 'original'
+            else:
+                fused_det = det_dehazed.copy()
+                fused_det['source'] = 'dehazed'
+            fused_det['matched'] = True
+            fused_detections.append(fused_det)
+        # 添加未匹配的检测
+        for idx in unmatched_orig:
+            det = original_detections[idx].copy()
+            det['source'] = 'original'
+            det['matched'] = False
+            fused_detections.append(det)
+        for idx in unmatched_dehazed:
+            det = dehazed_detections[idx].copy()
+            det['source'] = 'dehazed'
+            det['matched'] = False
+            fused_detections.append(det)
+        return fused_detections
+    def fuse_detections_quality(self,
+                                original_detections: List[Dict],
+                                dehazed_detections: List[Dict],
+                                original_quality: Dict[str, float],
+                                dehazed_quality: Dict[str, float]) -> List[Dict]:
+        """
+        基于图像质量的融合策略：优先选择质量更好的图像的检测结果
+        Args:
+            original_detections: 原图检测结果
+            dehazed_detections: 去雾图检测结果
+            original_quality: 原图质量指标
+            dehazed_quality: 去雾图质量指标
+        Returns:
+            融合后的检测结果
+        """
+        quality_weight_dehazed = self._calculate_quality_weight(original_quality, dehazed_quality)
+        # 如果去雾显著提升质量，优先使用去雾图的结果
+        if quality_weight_dehazed > 0.6:
+            return dehazed_detections
+        # 如果去雾没有明显改善，使用原图结果
+        elif quality_weight_dehazed < 0.4:
+            return original_detections
+        # 质量相近，使用置信度融合
+        else:
+            return self.fuse_detections_confidence(original_detections, dehazed_detections)
+    def fuse_detections_both(self,
+                            original_detections: List[Dict],
+                            dehazed_detections: List[Dict]) -> List[Dict]:
+        """
+        保留两者结果的融合策略：通过NMS去除重复
+        Args:
+            original_detections: 原图检测结果
+            dehazed_detections: 去雾图检测结果
+        Returns:
+            融合后的检测结果
+        """
+        # 合并所有检测
+        all_detections = []
+        for det in original_detections:
+            det_copy = det.copy()
+            det_copy['source'] = 'original'
+            all_detections.append(det_copy)
+        for det in dehazed_detections:
+            det_copy = det.copy()
+            det_copy['source'] = 'dehazed'
+            all_detections.append(det_copy)
+        if not all_detections:
+            return []
+        # 按类别分组进行NMS
+        fused_detections = []
+        classes = set([det['class_id'] for det in all_detections])
+        for cls_id in classes:
+            cls_detections = [det for det in all_detections if det['class_id'] == cls_id]
+            # 应用NMS
+            nms_result = self._apply_nms(cls_detections, self.iou_threshold)
+            fused_detections.extend(nms_result)
+        return fused_detections
+    def _apply_nms(self, detections: List[Dict], iou_threshold: float) -> List[Dict]:
+        """
+        应用非极大值抑制(NMS)
+        Args:
+            detections: 检测结果列表
+            iou_threshold: IoU阈值
+        Returns:
+            NMS后的检测结果
+        """
+        if not detections:
+            return []
+        # 按置信度排序
+        detections = sorted(detections, key=lambda x: x['confidence'], reverse=True)
+        keep = []
+        while detections:
+            # 保留置信度最高的
+            best = detections.pop(0)
+            keep.append(best)
+            # 移除与best重叠度高的检测
+            detections = [
+                det for det in detections
+                if self.calculate_iou(best['bbox'], det['bbox']) < iou_threshold
+            ]
+        return keep
+    def _calculate_quality_weight(self,
+                                  original_quality: Dict[str, float],
+                                  dehazed_quality: Dict[str, float]) -> float:
+        """
+        计算去雾图的质量权重（0-1之间）
+        Args:
+            original_quality: 原图质量指标
+            dehazed_quality: 去雾图质量指标
+        Returns:
+            去雾图的权重（越大表示去雾图质量越好）
+        """
+        # 归一化各项指标的改善程度
+        sharpness_ratio = dehazed_quality['sharpness'] / (original_quality['sharpness'] + 1e-6)
+        contrast_ratio = dehazed_quality['contrast'] / (original_quality['contrast'] + 1e-6)
+        entropy_ratio = dehazed_quality['entropy'] / (original_quality['entropy'] + 1e-6)
+        # 加权平均（可以根据实际效果调整权重）
+        weight = (sharpness_ratio * 0.4 + contrast_ratio * 0.4 + entropy_ratio * 0.2)
+        # 归一化到0-1
+        weight = weight / 2.0  # 假设最大改善为2倍
+        weight = np.clip(weight, 0.0, 1.0)
+        return float(weight)
+    def detect_with_fusion(self,
+                          img: np.ndarray,
+                          conf_threshold: float = 0.25,
+                          iou_threshold: float = 0.45,
+                          classes: Optional[List[int]] = None,
+                          max_det: int = 300) -> Dict:
+        """
+        执行双路检测并融合结果
+        Args:
+            img: 输入图像
+            conf_threshold: 检测置信度阈值
+            iou_threshold: NMS的IoU阈值
+            classes: 检测的类别列表
+            max_det: 最大检测数量
+        Returns:
+            包含详细信息的结果字典:
+                - original_detections: 原图检测结果
+                - dehazed_detections: 去雾图检测结果
+                - fused_detections: 融合后的检测结果
+                - original_quality: 原图质量评估
+                - dehazed_quality: 去雾图质量评估
+                - dehazed_image: 去雾后的图像
+        """
+        # 1. 评估原图质量
+        original_quality = self.quality_assessor.assess_image_quality(img)
+        # 2. 原图检测
+        original_detections = self.detector.detect(
+            img,
+            conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
+            classes=classes,
+            max_det=max_det
+        )
+        # 3. 去雾处理
+        dehazed_img = self.dehazer.process(img)
+        # 4. 评估去雾图质量
+        dehazed_quality = self.quality_assessor.assess_image_quality(dehazed_img)
+        # 5. 去雾图检测
+        dehazed_detections = self.detector.detect(
+            dehazed_img,
+            conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
+            classes=classes,
+            max_det=max_det
+        )
+        # 6. 融合检测结果
+        if self.fusion_strategy == 'adaptive':
+            fused_detections = self.fuse_detections_adaptive(
+                original_detections, dehazed_detections,
+                original_quality, dehazed_quality
+            )
+        elif self.fusion_strategy == 'confidence':
+            fused_detections = self.fuse_detections_confidence(
+                original_detections, dehazed_detections
+            )
+        elif self.fusion_strategy == 'quality':
+            fused_detections = self.fuse_detections_quality(
+                original_detections, dehazed_detections,
+                original_quality, dehazed_quality
+            )
+        elif self.fusion_strategy == 'both':
+            fused_detections = self.fuse_detections_both(
+                original_detections, dehazed_detections
+            )
+        else:
+            raise ValueError(f"Unknown fusion strategy: {self.fusion_strategy}")
+        return {
+            'original_detections': original_detections,
+            'dehazed_detections': dehazed_detections,
+            'fused_detections': fused_detections,
+            'original_quality': original_quality,
+            'dehazed_quality': dehazed_quality,
+            'dehazed_image': dehazed_img
+        }
