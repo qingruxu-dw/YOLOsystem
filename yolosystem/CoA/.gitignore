@@ -1,0 +1,29 @@
+# 忽略 Python 缓存和虚拟环境
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+
+# 忽略数据集和模型权重 (太大了)
+dataset/
+saved_model/
+clip_model/
+data/
+
+# 忽略运行输出和日志
+outputs/
+runs/
+fig/
+experiment/
+*.txt
+
+# 忽略其他大文件目录
+datasets/
+weights/
+outputs/
+*.pth
+*.pt
+*.jpg
+*.png
+*.mp4

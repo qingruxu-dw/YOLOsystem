@@ -1,0 +1,28 @@
+# 忽略 Python 缓存和虚拟环境
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+
+# 忽略数据集和模型权重 (太大了)
+yolosystem/CoA/dataset/
+yolosystem/CoA/saved_model/
+yolosystem/CoA/clip_model/
+yolosystem/CoA/data/
+
+# 忽略运行输出和日志
+yolosystem/CoA/outputs/
+yolosystem/CoA/runs/
+yolosystem/CoA/fig/
+yolosystem/CoA/experiment/
+
+# 忽略其他大文件目录
+datasets/
+weights/
+outputs/
+*.pth
+*.pt
+*.jpg
+*.png
+*.mp4
