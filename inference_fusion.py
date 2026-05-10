@@ -29,14 +29,31 @@ class FusionInference:
 
         # 加载融合模型
         print(f"加载融合模型: {checkpoint_path}")
+        
+        # 首先尝试从检查点中加载fusion_layers参数
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            if 'args' in checkpoint and hasattr(checkpoint['args'], 'fusion_layers'):
+                fusion_layers = checkpoint['args'].fusion_layers
+            elif 'args' in checkpoint and isinstance(checkpoint['args'], dict) and 'fusion_layers' in checkpoint['args']:
+                fusion_layers = checkpoint['args']['fusion_layers']
+            else:
+                # 如果检查点中没有保存fusion_layers参数，则使用默认值
+                fusion_layers = [2, 3, 4]  # P2, P3, P4
+        except:
+            # 如果无法从检查点中加载，则使用默认值
+            fusion_layers = [2, 3, 4]  # P2, P3, P4
+        
         self.model = FeatureFusionYOLO(
             model_size=model_size,
             num_classes=10,
+            fusion_layers=fusion_layers,
             pretrained=False
         )
 
-        checkpoint = torch.load(checkpoint_path, map_location=self.device,weights_only=False)
-        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        # 加载模型权重
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(checkpoint.get('model_state_dict', checkpoint), strict=False)
         self.model = self.model.to(self.device)
         self.model.eval()
 

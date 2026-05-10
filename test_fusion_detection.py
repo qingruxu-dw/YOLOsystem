@@ -138,8 +138,8 @@ class DetectionComparison:
             else:
                 raise
 
-        # 尝试从 args 中提取 fusion_layers，未找到则默认 [2, 4, 6] 或 [3, 6, 9] (如果是后面发现的)
-        fusion_layers = [3, 6, 9]  # 强制改为匹配训练的层数
+        # 尝试从 args 中提取 fusion_layers，未找到则默认 [2, 3, 4] (对应P2, P3, P4)
+        fusion_layers = [2, 3, 4]  # 使用P2, P3, P4层进行融合
         if 'args' in checkpoint and hasattr(checkpoint['args'], 'fusion_layers'):
             fusion_layers = checkpoint['args'].fusion_layers
         elif 'args' in checkpoint and isinstance(checkpoint['args'], dict) and 'fusion_layers' in checkpoint['args']:

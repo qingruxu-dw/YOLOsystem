@@ -132,7 +132,7 @@ class TwoStageTrainer:
         self.model = FeatureFusionYOLO(
             model_size=args.model_size,
             num_classes=args.num_classes,
-            fusion_layers=[3, 6, 9],  # P2/P3/P4
+            fusion_layers=[2, 3, 4],  # P2/P3/P4
             pretrained=args.pretrained
         )
         self.model = self.model.to(self.device)

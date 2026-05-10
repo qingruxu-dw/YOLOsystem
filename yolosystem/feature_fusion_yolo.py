@@ -110,7 +110,7 @@ class DualPathBackbone(nn.Module):
     - 在多个层级进行特征融合
     """
 
-    def __init__(self, base_model: YOLO, fusion_layers: List[int] = [3, 6, 9]):
+    def __init__(self, base_model: YOLO, fusion_layers: List[int] = [2, 3, 4]):
         """
         Args:
             base_model: 基础YOLOv11模型
@@ -125,14 +125,9 @@ class DualPathBackbone(nn.Module):
         # 创建特征融合模块
         self.fusion_modules = nn.ModuleDict()
 
-        # 根据YOLOv11架构确定各层的通道数
-        # 修正：根据你之前保存的权重大小，这里对于 v11n 模型，各层的实际通道数应为 64, 128, 256
-        channel_configs = {
-            3: 64,   
-            6: 128,  
-            9: 256   
-        }
-
+        # 动态获取各层通道数
+        channel_configs = self._get_channel_configs(fusion_layers)
+        
         for layer_idx in fusion_layers:
             if layer_idx in channel_configs:
                 channels = channel_configs[layer_idx]
@@ -140,14 +135,30 @@ class DualPathBackbone(nn.Module):
                     channels, fusion_type='attention'
                 )
 
-    def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> torch.Tensor:
+    def _get_channel_configs(self, fusion_layers):
+        """
+        动态获取指定层的通道数
+        """
+        # 创建一个虚拟输入来获取各层输出的通道数
+        dummy_input = torch.randn(1, 3, 640, 640)
+        x = dummy_input
+        layer_outputs = {}
+        
+        for i, layer in enumerate(self.model.model[:10]):
+            x = layer(x)
+            if i in fusion_layers:
+                layer_outputs[i] = x.shape[1]  # channel dimension
+        
+        return layer_outputs
+
+    def forward(self, img_original: torch.Tensor, img_dehazed: torch.Tensor) -> List[torch.Tensor]:
         """
         Args:
             img_original: 原图 [B, 3, H, W]
             img_dehazed: 去雾图 [B, 3, H, W]
 
         Returns:
-            融合后的单个特征张量（用于后续处理）
+            融合后的特征列表（仅包含融合层的特征）
         """
         # 存储所有层的输出
         feats_original = []
@@ -165,7 +176,7 @@ class DualPathBackbone(nn.Module):
             x_dehz = layer(x_dehz)
             feats_dehazed.append(x_dehz)
 
-        # 在指定层进行特征融合，其他层使用原图特征
+        # 在指定层进行特征融合，返回融合后的特征列表
         fused_features = []
         for i in range(len(feats_original)):
             if i in self.fusion_layers and f'fusion_{i}' in self.fusion_modules:
@@ -173,12 +184,13 @@ class DualPathBackbone(nn.Module):
                 fusion_module = self.fusion_modules[f'fusion_{i}']
                 fused_feat = fusion_module(feats_original[i], feats_dehazed[i])
                 fused_features.append(fused_feat)
-            else:
-                # 非融合层，直接使用去雾图特征
+            elif i in self.fusion_layers:
+                # 如果层在融合层列表中但没有融合模块，则使用去雾特征
                 fused_features.append(feats_dehazed[i])
 
-        # 返回整个特征列表以供 neck (FPN+PAN) 处理
+        # 只返回融合层的特征，这是传递给Neck的部分
         return fused_features
+
 
 class FeatureFusionYOLO(nn.Module):
     """
@@ -195,13 +207,13 @@ class FeatureFusionYOLO(nn.Module):
     def __init__(self,
                  model_size: str = 'n',
                  num_classes: int = 6,
-                 fusion_layers: List[int] = [3, 6, 9],
+                 fusion_layers: List[int] = [2, 3, 4],  # P2, P3, P4层
                  pretrained: bool = True):
         """
         Args:
             model_size: 模型大小 ('n', 's', 'm', 'l', 'x')
             num_classes: 类别数量
-            fusion_layers: 特征融合层
+            fusion_layers: 特征融合层 (对应P2, P3, P4)
             pretrained: 是否使用预训练权重
         """
         super().__init__()
@@ -296,13 +308,12 @@ class FeatureFusionYOLO(nn.Module):
         Returns:
             检测结果
         """
-        # 获取融合后的backbone特征列表
-        # dual_backbone 会返回 layer 0 到 layer 9 的所有特征 (长度为10)
+        # 获取融合后的关键特征（对应P2, P3, P4）
         fused_features = self.dual_backbone(img_original, img_dehazed)
 
         # 通过Neck和Head
-        # 直接使用返回的特征列表作为初始的特征缓存 x，因为长度正好是 10，索引 0~9
-        x = list(fused_features)
+        # 只传递融合后的3个关键特征给Neck，符合YOLOv11的设计预期
+        x = list(fused_features)  # 长度为3，对应P2, P3, P4特征
 
         for i, layer in enumerate(self.neck_head):
             if hasattr(layer, 'f') and layer.f != -1:
@@ -361,7 +372,7 @@ def create_feature_fusion_yolo(model_size: str = 'n',
     model = FeatureFusionYOLO(
         model_size=model_size,
         num_classes=num_classes,
-        fusion_layers=[3, 6, 9],  # 在P2, P3, P4层融合
+        fusion_layers=[2, 3, 4],  # 在P2, P3, P4层融合
         pretrained=pretrained
     )
 
